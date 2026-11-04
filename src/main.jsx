@@ -115,9 +115,71 @@ const HOME_LICENSE_PLAN_FALLBACK = [
 ];
 const appVersions = [
   {
+    versionName: '0.2.86',
+    versionCode: 97,
+    label: 'Latest release',
+    date: 'November 4, 2026',
+    summary: 'New eye and eyewear stickers, direct photo adjustment, faster printing, improved Receiptbooth recovery, and reprint tracking with automatic portal synchronization.',
+    sections: [
+      {
+        title: 'Cute Eye And Eyewear Stickers',
+        items: [
+          'Added 30 cute eye/eyewear stickers to Photobooth, Receiptbooth, and Admin editors.',
+          'Added group visibility controls.',
+          'Improved Receiptbooth recovery when printers are disconnected, allowing users to reach their digital-copy screen.'
+        ]
+      },
+      {
+        title: 'Locked Templates And Navigation',
+        items: [
+          'Receiptbooth now skips template selection when the Admin template is locked.',
+          'Users proceed to live capture after any required payment.',
+          'Improved cancellation and return navigation.'
+        ]
+      },
+      {
+        title: 'Independent Photo Position And Zoom',
+        items: [
+          'Added independent photo positioning and zoom in Receiptbooth Step 2.',
+          'Adjustments carry into the printed receipt and saved/downloaded JPEG without moving the template.'
+        ]
+      },
+      {
+        title: 'Direct Photo Adjustment And Canon USB Recovery',
+        items: [
+          'Removed the Adjust photos button and dialog. Users can drag and pinch photos directly in the layout preview.',
+          'Added cached previews for smoother adjustment.',
+          'Improved Canon USB threading, error reporting, and stuck-queue recovery.'
+        ]
+      },
+      {
+        title: 'Canon G1010 Photo Profiles',
+        items: [
+          'Corrected Canon G1010 photo-profile settings used by Photobooth and Rush ID.',
+          'Added profile regression tests and better print-preparation logs.',
+          'Prevented digital-copy errors from cancelling printing.'
+        ]
+      },
+      {
+        title: 'Printing And Digital Copies',
+        items: [
+          'Separated print preparation from JPEG saving and download-QR preparation.',
+          'Printing is submitted while the animation is visible, without waiting for the QR workflow.'
+        ]
+      },
+      {
+        title: 'Reprint Tracking And Portal Synchronization',
+        items: [
+          'Added reprint tracking to the app dashboard and automatic synchronization through the existing sales API.',
+          'Added copy counts, failure/partial/unknown outcomes, offline retries, duplicate protection, and restart recovery.'
+        ]
+      }
+    ]
+  },
+  {
     versionName: '0.2.69',
     versionCode: 80,
-    label: 'Latest release',
+    label: 'Previous release',
     date: 'October 2026',
     summary: 'Receiptbooth carousel and template improvements, animated GIF QR downloads, offline transaction sync, reusable coin credit, and independent session and print orientation controls.',
     sections: [

@@ -1,6 +1,6 @@
 ﻿{
-    "versionCode":  96,
-    "versionName":  "0.2.85",
+    "versionCode":  97,
+    "versionName":  "0.2.86",
     "apkUrl":  "https://phototags.vercel.app/PhotoTags.apk",
-    "message":  "PhotoTags 0.2.85: printing starts during the animation while download QR preparation runs separately."
+    "message":  "PhotoTags 0.2.86: reprint dashboard tracking, copy send outcomes, and automatic offline-capable portal synchronization."
 }
