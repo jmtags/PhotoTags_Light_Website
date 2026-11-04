@@ -242,3 +242,26 @@ test('report rejects invalid filters, requires business auth, and RPC privileges
   await pg.exec(migration); // repeatable deployment; no data loss
   assert.equal((await report('dateFrom=2026-10-15&dateTo=2026-10-15')).total, 1205);
 });
+
+test('deployed sync route collects reprints and business report returns their full metadata once', async () => {
+  const devicesApi = require('../api/devices');
+  const businessApi = require('../api/business');
+  const rewrite = JSON.parse(readFileSync('vercel.json', 'utf8')).rewrites.find(route => route.source === '/api/devices/transactions/sync');
+  assert.equal(rewrite.destination, '/api/devices?route=transactions-sync');
+  const item = record({ occurredAt: '2026-11-05T03:00:00Z', copiesRequested: 3, printsUsed: 1, printStatus: 'partial', note: 'Gallery reprint API verification' });
+  const request = { body: { deviceId: 'device-one', businessId: A, appVersion: 'test', platform: 'android', transactions: [item] }, url: '/api/devices?route=transactions-sync' };
+  const result = await call(devicesApi, request);
+  assert.deepEqual(result.accepted, [item.transactionId]);
+  assert.deepEqual(result.failed, []);
+  const retry = await call(devicesApi, request);
+  assert.deepEqual(retry.duplicates, [item.transactionId]);
+  const report = await call(businessApi, { method: 'GET', url: '/api/business?route=transactions&mode=Reprint&dateFrom=2026-11-05&dateTo=2026-11-05' });
+  assert.equal(report.total, 1);
+  assert.equal(report.summary.reprintBatches, 1);
+  assert.equal(report.summary.reprintCopiesSent, 1);
+  assert.equal(report.summary.recordedRevenueCentavos, 0);
+  assert.equal(report.transactions[0].copies_requested, 3);
+  assert.equal(report.transactions[0].print_status, 'partial');
+  assert.equal(report.transactions[0].source_mode, 'Photobooth');
+  assert.equal(report.transactions[0].transaction_id, item.transactionId);
+});

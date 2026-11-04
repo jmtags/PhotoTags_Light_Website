@@ -16,6 +16,7 @@ export default function BusinessTransactionsSection({ devices, refreshToken }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -24,6 +25,7 @@ export default function BusinessTransactionsSection({ devices, refreshToken }) {
     setLoading(true);
     setError('');
     setReport(null);
+    setExpandedId(null);
     const params = new URLSearchParams({ ...filters, page: String(page), pageSize: '50' });
     (async () => {
       try {
@@ -89,7 +91,7 @@ export default function BusinessTransactionsSection({ devices, refreshToken }) {
           <option value="all">All statuses</option><option value="completed">completed</option><option value="failed">failed</option>
         </select></label>
       </div>
-      <p className="transaction-report-context">{!filters.dateFrom && !filters.dateTo ? 'All recorded dates' : `${filters.dateFrom || 'First record'} to ${filters.dateTo || 'Latest record'}`} · Asia/Manila. Totals cover every matching record, across all pages.</p>
+      <p className="transaction-report-context">{!filters.dateFrom && !filters.dateTo ? 'All recorded dates' : `${filters.dateFrom || 'First record'} to ${filters.dateTo || 'Latest record'}`} | Asia/Manila. Totals cover every matching record, across all pages.</p>
       {loading ? <p role="status">Loading transaction report...</p> : null}
       {error ? <p className="login-error" role="alert">{error}</p> : null}
       {report ? <>
@@ -97,33 +99,67 @@ export default function BusinessTransactionsSection({ devices, refreshToken }) {
           {metrics.map(([label, value]) => <article key={label}><span>{label}</span><strong>{value}</strong></article>)}
         </div>
         <p className="transaction-report-context">Free copies add no revenue. Paid-reprint revenue is included in recorded revenue; a failed send does not remove a collected payment. Updated {date(report.asOf)}.</p>
-        <div className="transaction-report-list">
-          {report.transactions.length ? report.transactions.map(transaction => (
-            <article className="transaction-report-row" key={transaction.id}>
-              <div className="transaction-report-heading">
-                <strong>{transaction.mode === 'Reprint' && transaction.payment_method === 'none' ? 'Free/admin reprint' : transaction.mode === 'Reprint' ? transaction.amount_centavos > 0 ? 'Paid reprint' : 'Reprint (no new charge)' : transaction.mode}</strong>
-                <strong>{money(transaction.amount_centavos)}</strong>
-              </div>
-              <dl className="transaction-report-details">
-                <div><dt>Payment method</dt><dd>{transaction.payment_method === 'none' ? 'No payment' : transaction.payment_method}</dd></div>
-                <div><dt>Transaction status</dt><dd>{transaction.status}</dd></div>
-                <div><dt>Copies requested</dt><dd>{transaction.copies_requested ?? 'Not recorded'}</dd></div>
-                <div><dt>{transaction.print_status ? 'Copies sent' : 'Legacy copies recorded'}</dt><dd>{transaction.prints_used}</dd></div>
-                <div><dt>Printer send status</dt><dd>{PRINT_LABELS[transaction.print_status] || 'Not recorded (legacy)'}</dd></div>
-                <div><dt>Device</dt><dd>{transaction.device_id}</dd></div>
-                <div><dt>Occurred (Manila)</dt><dd>{date(transaction.occurred_at)}</dd></div>
-                <div><dt>Synced (Manila)</dt><dd>{date(transaction.received_at)}</dd></div>
-                <div><dt>Source mode</dt><dd>{transaction.source_mode || 'Not recorded'}</dd></div>
-                <div><dt>Original device transaction ID</dt><dd>{transaction.original_transaction_id || 'Not linked'}</dd></div>
-                <div><dt>Device transaction ID</dt><dd>{transaction.transaction_id}</dd></div>
-              </dl>
-              {transaction.note ? <p>{transaction.note}</p> : null}
-            </article>
-          )) : <p className="queue-empty">No transactions match the current filters.</p>}
+        <div className="transaction-report-table-scroll" tabIndex={0} role="region" aria-label="Transactions and reprints table">
+          <table className="transaction-report-table">
+            <caption>Click a row or View details to see the full transaction.</caption>
+            <thead><tr>
+              <th scope="col">Occurred (Manila)</th><th scope="col">Type</th><th scope="col">Amount</th>
+              <th scope="col">Payment</th><th scope="col">Status</th><th scope="col">Copies</th>
+              <th scope="col">Device</th><th scope="col">Details</th>
+            </tr></thead>
+            <tbody>
+              {report.transactions.length ? report.transactions.map(transaction => {
+                const expanded = expandedId === transaction.id;
+                const detailsId = `transaction-details-${transaction.id}`;
+                const toggle = () => setExpandedId(current => current === transaction.id ? null : transaction.id);
+                return (
+                  <React.Fragment key={transaction.id}>
+                    <tr className={`transaction-report-summary-row${expanded ? ' is-expanded' : ''}`} onClick={toggle}>
+                      <td>{date(transaction.occurred_at)}</td>
+                      <td><strong>{transaction.mode}</strong>{transaction.mode === 'Reprint' ? <small>{transaction.payment_method === 'none' ? 'Free/admin' : transaction.amount_centavos > 0 ? 'Paid' : 'No new charge'}</small> : null}</td>
+                      <td>{money(transaction.amount_centavos)}</td>
+                      <td>{transaction.payment_method === 'none' ? 'No payment' : transaction.payment_method}</td>
+                      <td>{transaction.status}</td>
+                      <td>{transaction.print_status ? `${transaction.prints_used} / ${transaction.copies_requested} sent` : `${transaction.prints_used} recorded`}</td>
+                      <td className="transaction-report-device">{transaction.device_id}</td>
+                      <td><button type="button" className="transaction-details-toggle" aria-expanded={expanded} aria-controls={detailsId}
+                        aria-label={`${expanded ? 'Hide' : 'View'} details for ${transaction.mode} transaction ${transaction.transaction_id}`}
+                        onClick={event => { event.stopPropagation(); toggle(); }}>{expanded ? 'Hide details' : 'View details'}</button></td>
+                    </tr>
+                    <tr id={detailsId} className="transaction-report-detail-row" hidden={!expanded}>
+                      <td colSpan={8}>
+                        {expanded ? <>
+                          <h3>Transaction details</h3>
+                          <dl className="transaction-report-details">
+                            <div><dt>Mode</dt><dd>{transaction.mode}</dd></div>
+                            <div><dt>Amount recorded</dt><dd>{money(transaction.amount_centavos)}</dd></div>
+                            <div><dt>Payment method</dt><dd>{transaction.payment_method === 'none' ? 'No payment (free/admin)' : transaction.payment_method}</dd></div>
+                            <div><dt>Transaction status</dt><dd>{transaction.status}</dd></div>
+                            <div><dt>Copies requested</dt><dd>{transaction.copies_requested ?? 'Not recorded'}</dd></div>
+                            <div><dt>{transaction.print_status ? 'Copies sent' : 'Legacy copies recorded'}</dt><dd>{transaction.prints_used}</dd></div>
+                            <div><dt>Printer send status</dt><dd>{PRINT_LABELS[transaction.print_status] || 'Not recorded (legacy)'}</dd></div>
+                            <div><dt>Device</dt><dd>{transaction.device_id}</dd></div>
+                            <div><dt>Occurred (Manila)</dt><dd>{date(transaction.occurred_at)}</dd></div>
+                            <div><dt>Synced (Manila)</dt><dd>{date(transaction.received_at)}</dd></div>
+                            <div><dt>Source mode</dt><dd>{transaction.source_mode || 'Not recorded'}</dd></div>
+                            <div><dt>Original device transaction ID</dt><dd>{transaction.original_transaction_id || 'Not linked'}</dd></div>
+                            <div><dt>Device transaction ID</dt><dd>{transaction.transaction_id}</dd></div>
+                            <div><dt>Record ID</dt><dd>{transaction.id}</dd></div>
+                            <div><dt>Voucher code</dt><dd>{transaction.voucher_code || 'None'}</dd></div>
+                          </dl>
+                          {transaction.note ? <p className="transaction-report-note">{transaction.note}</p> : null}
+                        </> : null}
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                );
+              }) : <tr><td colSpan={8} className="queue-empty">No transactions match the current filters.</td></tr>}
+            </tbody>
+          </table>
         </div>
         <div className="transaction-report-pagination">
           <button type="button" className="outline-button" disabled={page === 1 || loading} onClick={() => setPage(value => value - 1)}>Previous</button>
-          <span>Page {report.page} · {report.total} matching records</span>
+          <span>Page {report.page} | {report.total} matching records</span>
           <button type="button" className="outline-button" disabled={!report.hasMore || loading} onClick={() => setPage(value => value + 1)}>Next</button>
         </div>
       </> : null}

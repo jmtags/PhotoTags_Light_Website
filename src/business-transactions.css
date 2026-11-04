@@ -5,18 +5,6 @@
   color: rgba(244, 248, 255, 0.74);
   line-height: 1.6;
 }
-.transaction-report-list {
-  display: grid;
-  gap: 16px;
-}
-.transaction-report-row {
-  padding: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.transaction-report-heading,
 .transaction-report-pagination {
   display: flex;
   gap: 16px;
@@ -24,7 +12,73 @@
   justify-content: space-between;
   align-items: center;
 }
-.transaction-report-heading { font-size: 1.1rem; }
+.transaction-report-table-scroll {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+.transaction-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.9rem;
+}
+.transaction-report-table caption {
+  padding: 0 0 14px;
+  text-align: left;
+  color: rgba(244, 248, 255, 0.68);
+}
+.transaction-report-table th,
+.transaction-report-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  vertical-align: top;
+}
+.transaction-report-table th {
+  color: rgba(244, 248, 255, 0.68);
+  font-weight: 700;
+}
+.transaction-report-summary-row {
+  cursor: pointer;
+}
+.transaction-report-summary-row:hover,
+.transaction-report-summary-row:focus-within,
+.transaction-report-summary-row.is-expanded {
+  background: rgba(255, 255, 255, 0.05);
+}
+.transaction-report-summary-row small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(244, 248, 255, 0.68);
+}
+.transaction-report-device {
+  max-width: 180px;
+  overflow-wrap: anywhere;
+}
+.transaction-details-toggle {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(0, 199, 119, 0.4);
+  border-radius: 6px;
+  background: transparent;
+  color: #00d887;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.transaction-details-toggle:focus-visible,
+.transaction-report-table-scroll:focus-visible {
+  outline: 2px solid #00d887;
+  outline-offset: 3px;
+}
+.transaction-report-detail-row > td {
+  background: rgba(3, 7, 15, 0.28);
+  padding: 20px;
+}
+.transaction-report-detail-row h3 {
+  margin: 0;
+  font-size: 1rem;
+}
 .transaction-report-details {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
@@ -33,4 +87,6 @@
 }
 .transaction-report-details dt { color: rgba(244, 248, 255, 0.64); font-size: 0.85rem; }
 .transaction-report-details dd { margin: 6px 0 0; }
+.transaction-report-details dd,
+.transaction-report-note { overflow-wrap: anywhere; }
 .transaction-report-pagination { margin-top: 20px; }
