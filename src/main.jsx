@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 import SupportContact from './SupportContact';
+import BusinessTransactionsSection from './BusinessTransactionsSection';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'phototags2026';
@@ -1410,156 +1411,11 @@ const PAYMONGO_SETUP_ERRORS = {
   payment_lookup_failed: 'Pending payments could not be checked. Please try again.',
   encryption_not_configured: 'Secure payment key storage is not configured. Contact PhotoTags support.'
 };
-const TRANSACTION_FILTER_INITIAL = {
-  dateFrom: '',
-  dateTo: '',
-  deviceId: 'all',
-  mode: 'all',
-  paymentMethod: 'all',
-  status: 'all'
-};
-const TRANSACTION_MODES = ['Photobooth', 'ID Photo', 'Receiptbooth'];
-const TRANSACTION_PAYMENT_METHODS = ['coin', 'voucher'];
-const TRANSACTION_STATUSES = ['completed', 'failed'];
-
 function formatMoney(amount, currency = 'PHP') {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
     currency
   }).format(Number(amount || 0) / 100);
-}
-
-function formatCentavos(amount) {
-  return formatMoney(amount, 'PHP');
-}
-
-function getLocalDateInput(value) {
-  const date = value ? new Date(value) : new Date();
-  if (!Number.isFinite(date.getTime())) return '';
-  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return offsetDate.toISOString().slice(0, 10);
-}
-
-function BusinessTransactionsSection({ devices, transactions, onRefresh, refreshing }) {
-  const [filters, setFilters] = useState(TRANSACTION_FILTER_INITIAL);
-  const filteredTransactions = useMemo(() => {
-    const fromTime = filters.dateFrom ? new Date(`${filters.dateFrom}T00:00:00`).getTime() : null;
-    const toTime = filters.dateTo ? new Date(`${filters.dateTo}T23:59:59`).getTime() : null;
-
-    return (transactions || []).filter((transaction) => {
-      const occurredTime = transaction.occurred_at ? new Date(transaction.occurred_at).getTime() : null;
-      if (fromTime && (!occurredTime || occurredTime < fromTime)) return false;
-      if (toTime && (!occurredTime || occurredTime > toTime)) return false;
-      if (filters.deviceId !== 'all' && transaction.device_id !== filters.deviceId) return false;
-      if (filters.mode !== 'all' && transaction.mode !== filters.mode) return false;
-      if (filters.paymentMethod !== 'all' && transaction.payment_method !== filters.paymentMethod) return false;
-      if (filters.status !== 'all' && transaction.status !== filters.status) return false;
-      return true;
-    });
-  }, [filters, transactions]);
-
-  const transactionSummary = useMemo(() => {
-    const todayKey = getLocalDateInput();
-    const todaySales = (transactions || [])
-      .filter((transaction) => transaction.status === 'completed' && getLocalDateInput(transaction.occurred_at) === todayKey)
-      .reduce((total, transaction) => total + Number(transaction.amount_centavos || 0), 0);
-
-    return {
-      todaySales,
-      completed: filteredTransactions.filter((transaction) => transaction.status === 'completed').length,
-      coinPayments: filteredTransactions.filter((transaction) => transaction.payment_method === 'coin').length,
-      voucherPayments: filteredTransactions.filter((transaction) => transaction.payment_method === 'voucher').length,
-      failedVoucherAttempts: filteredTransactions.filter((transaction) => transaction.payment_method === 'voucher' && transaction.status === 'failed').length,
-      receiptboothPrints: filteredTransactions
-        .filter((transaction) => transaction.mode === 'Receiptbooth' && transaction.status === 'completed')
-        .reduce((total, transaction) => total + Number(transaction.prints_used || 0), 0)
-    };
-  }, [filteredTransactions, transactions]);
-
-  const clearFilters = () => setFilters(TRANSACTION_FILTER_INITIAL);
-
-  return (
-    <section className="business-card business-transactions-card">
-      <div className="business-section-heading">
-        <div>
-          <h2>PhotoTags transactions</h2>
-          <p>Synced kiosk sales, voucher attempts, and Receiptbooth print usage.</p>
-        </div>
-        <div className="business-section-actions">
-          <button className="outline-button" type="button" onClick={onRefresh} disabled={refreshing}>
-            <RefreshCw size={18} className={refreshing ? 'spin' : ''} />
-            Refresh
-          </button>
-          <button className="outline-button" type="button" onClick={clearFilters}>
-            <SlidersHorizontal size={18} />
-            Clear Filters
-          </button>
-        </div>
-      </div>
-
-      <div className="business-transaction-summary">
-        <article><span>Today's sales</span><strong>{formatCentavos(transactionSummary.todaySales)}</strong></article>
-        <article><span>Completed</span><strong>{transactionSummary.completed}</strong></article>
-        <article><span>Coin payments</span><strong>{transactionSummary.coinPayments}</strong></article>
-        <article><span>Voucher payments</span><strong>{transactionSummary.voucherPayments}</strong></article>
-        <article><span>Failed vouchers</span><strong>{transactionSummary.failedVoucherAttempts}</strong></article>
-        <article><span>Receiptbooth prints</span><strong>{transactionSummary.receiptboothPrints}</strong></article>
-      </div>
-
-      <div className="business-transaction-filters">
-        <label>
-          From
-          <input type="date" value={filters.dateFrom} onChange={(event) => setFilters({ ...filters, dateFrom: event.target.value })} />
-        </label>
-        <label>
-          To
-          <input type="date" value={filters.dateTo} onChange={(event) => setFilters({ ...filters, dateTo: event.target.value })} />
-        </label>
-        <label>
-          Device
-          <select value={filters.deviceId} onChange={(event) => setFilters({ ...filters, deviceId: event.target.value })}>
-            <option value="all">All devices</option>
-            {(devices || []).map((device) => <option key={device.device_id} value={device.device_id}>{device.device_id}</option>)}
-          </select>
-        </label>
-        <label>
-          Mode
-          <select value={filters.mode} onChange={(event) => setFilters({ ...filters, mode: event.target.value })}>
-            <option value="all">All modes</option>
-            {TRANSACTION_MODES.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-        <label>
-          Payment
-          <select value={filters.paymentMethod} onChange={(event) => setFilters({ ...filters, paymentMethod: event.target.value })}>
-            <option value="all">All payments</option>
-            {TRANSACTION_PAYMENT_METHODS.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-            <option value="all">All statuses</option>
-            {TRANSACTION_STATUSES.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
-      </div>
-
-      <div className="business-table business-transaction-table">
-        {filteredTransactions.length ? filteredTransactions.slice(0, 100).map((transaction) => (
-          <div className="business-row business-transaction-row" key={transaction.id}>
-            <strong>{formatCentavos(transaction.amount_centavos)}</strong>
-            <span>{transaction.mode}</span>
-            <span>{transaction.payment_method}</span>
-            <span>{transaction.status}</span>
-            <span>{transaction.prints_used} prints</span>
-            <span>{transaction.device_id}</span>
-            <span>{formatDate(transaction.occurred_at)}</span>
-          </div>
-        )) : <p className="queue-empty">No transactions match the current filters.</p>}
-      </div>
-    </section>
-  );
 }
 
 function ActivationPage() {
@@ -2226,9 +2082,7 @@ function BusinessPage() {
 
       <BusinessTransactionsSection
         devices={dashboard.devices || []}
-        transactions={dashboard.transactions || []}
-        onRefresh={() => loadDashboard()}
-        refreshing={status === 'loading'}
+        refreshToken={dashboard.transactionReport?.asOf}
       />
 
       <section className="business-card">

@@ -2,6 +2,7 @@ const auth = require('../server/business-auth');
 const dashboard = require('../server/business-dashboard');
 const pairingCode = require('../server/business-pairing-code');
 const paymongo = require('../server/business-paymongo');
+const transactions = require('../server/business-transactions');
 
 function routeName(request) {
   return request.query?.route || new URL(request.url || '/', 'https://phototags.local').searchParams.get('route');
@@ -9,6 +10,11 @@ function routeName(request) {
 
 module.exports = async function handler(request, response) {
   const route = routeName(request);
+
+  if (route === 'transactions') {
+    await transactions(request, response);
+    return;
+  }
 
   if (route === 'auth') {
     await auth(request, response);

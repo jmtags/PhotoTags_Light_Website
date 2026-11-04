@@ -1,0 +1,36 @@
+.business-transaction-summary.reprint-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+.transaction-report-context {
+  color: rgba(244, 248, 255, 0.74);
+  line-height: 1.6;
+}
+.transaction-report-list {
+  display: grid;
+  gap: 16px;
+}
+.transaction-report-row {
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.transaction-report-heading,
+.transaction-report-pagination {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+}
+.transaction-report-heading { font-size: 1.1rem; }
+.transaction-report-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 16px;
+  margin: 20px 0 0;
+}
+.transaction-report-details dt { color: rgba(244, 248, 255, 0.64); font-size: 0.85rem; }
+.transaction-report-details dd { margin: 6px 0 0; }
+.transaction-report-pagination { margin-top: 20px; }

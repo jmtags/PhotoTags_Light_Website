@@ -7,8 +7,9 @@ const {
   validateDeviceId
 } = require('./_business-utils');
 
-const VALID_MODES = new Set(['Photobooth', 'ID Photo', 'Receiptbooth']);
-const VALID_PAYMENT_METHODS = new Set(['coin', 'voucher']);
+const { MODES, METHODS, reprintFields } = require('./_reprint-contract');
+const VALID_MODES = new Set(MODES);
+const VALID_PAYMENT_METHODS = new Set(METHODS);
 const VALID_STATUSES = new Set(['completed', 'failed']);
 const MAX_TRANSACTIONS_PER_SYNC = 500;
 
@@ -61,6 +62,9 @@ function normalizeTransaction(item) {
     return { transactionId, error: 'Invalid payload' };
   }
 
+  const metadata = reprintFields(item, { mode, paymentMethod, status, amountCentavos, printsUsed, voucherCode });
+  if (metadata.error) return { transactionId, error: metadata.error };
+
   return {
     transactionId,
     row: {
@@ -73,7 +77,9 @@ function normalizeTransaction(item) {
       voucher_code: voucherCode,
       prints_used: printsUsed,
       note,
-      raw_payload: safeRawPayload(item)
+      ...metadata.row,
+      // New reprint records deliberately exclude arbitrary gallery/file data.
+      raw_payload: mode === 'Reprint' ? null : safeRawPayload(item)
     }
   };
 }
@@ -169,6 +175,16 @@ module.exports = async function handler(request, response) {
     }
 
     const existingIds = new Set((existing || []).map((item) => item.transaction_id));
+    const originalIds = [...new Set(normalized.filter(item => !existingIds.has(item.transactionId))
+      .map(item => item.row.original_transaction_id).filter(Boolean))];
+    const allowedOriginals = new Set(normalized.filter(item => !existingIds.has(item.transactionId)).map(item => item.transactionId));
+    if (originalIds.length) {
+      const { data: originals, error: originalsError } = await supabase.from('transactions')
+        .select('transaction_id').eq('business_id', businessId).eq('device_id', deviceId)
+        .in('transaction_id', originalIds);
+      if (originalsError) return sendJson(response, 500, { ok: false, status: 'transaction_lookup_failed' });
+      (originals || []).forEach(item => allowedOriginals.add(item.transaction_id));
+    }
     const rows = normalized
       .filter((item) => {
         if (existingIds.has(item.transactionId)) {
@@ -180,6 +196,8 @@ module.exports = async function handler(request, response) {
       })
       .map((item) => ({
         ...item.row,
+        original_transaction_id: item.row.original_transaction_id !== item.transactionId
+          && allowedOriginals.has(item.row.original_transaction_id) ? item.row.original_transaction_id : null,
         business_id: businessId,
         device_id: deviceId
       }));
@@ -216,3 +234,5 @@ module.exports = async function handler(request, response) {
 
   sendJson(response, 200, { ok: true, accepted, duplicates, failed });
 };
+
+module.exports.normalizeTransaction = normalizeTransaction;
