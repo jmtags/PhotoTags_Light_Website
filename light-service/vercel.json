@@ -1,0 +1,6 @@
+{
+  "framework": null,
+  "buildCommand": "npm run build",
+  "outputDirectory": "public",
+  "functions": { "api/light.js": { "maxDuration": 60 } }
+}

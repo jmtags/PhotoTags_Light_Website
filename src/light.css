@@ -1,0 +1,26 @@
+.light-admin { min-width:0; line-height:1.6; }
+.light-admin-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:16px; align-items:center; }
+.light-admin h2 { margin:4px 0; }
+.light-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:24px 0 12px; }
+.light-tabs button,.light-admin td button { border:1px solid #d5dce8; border-radius:9px; padding:10px 14px; background:white; color:#243350; cursor:pointer; }
+.light-tabs [aria-current=page] { background:#172c4d; color:white; }
+.light-admin-message { overflow-wrap:anywhere; min-height:24px; }
+.light-admin-note { font-size:13px; color:#b2c0d5; }
+.light-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin:24px 0; }
+.light-summary article,.light-plan-editor,.light-create { border:1px solid #354761; background:#0d1b30; color:#f5f8fc; padding:20px; border-radius:14px; }
+.light-summary strong { display:block; font-size:32px; }
+.light-table-wrap { overflow:auto; margin:20px 0; }
+.light-admin table { border-collapse:collapse; width:100%; min-width:680px; font-size:13px; }
+.light-admin th,.light-admin td { text-align:left; border-bottom:1px solid #d5dce8; padding:12px; vertical-align:top; max-width:300px; overflow-wrap:anywhere; }
+.light-admin small { display:block; color:#b2c0d5; margin-top:5px; }
+.light-admin td button { display:block; margin:0 0 8px; white-space:normal; }
+.light-admin button:disabled { opacity:.5; cursor:default; }
+.light-search,.light-create label,.light-plan-editor label { display:block; font-size:13px; margin:12px 0; }
+.light-admin input:not([type=checkbox]),.light-admin select { display:block; width:100%; border:1px solid #bfcadd; border-radius:8px; padding:10px; margin-top:5px; color:#172c4d; background:white; }
+.light-admin input[type=checkbox] { appearance:auto; display:inline-block; width:18px; height:18px; min-height:0; padding:0; margin:0 8px 0 0; vertical-align:middle; }
+.light-search { max-width:440px; }
+.light-plan-editor-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:18px; margin:24px 0; }
+.light-public { max-width:1100px; margin:0 auto; padding:48px 24px; line-height:1.8; }
+.light-public h1 { font-size:clamp(32px,5vw,60px); line-height:1.15; margin:18px 0; }
+.light-public .primary-button { display:inline-flex; margin:20px 0; }
+.light-public section { border-top:1px solid #d5dce8; padding-top:24px; margin-top:32px; }

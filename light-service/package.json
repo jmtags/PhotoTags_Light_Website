@@ -1,0 +1,8 @@
+{
+  "name": "phototags-light-license-service",
+  "private": true,
+  "version": "1.0.0",
+  "engines": { "node": ">=22" },
+  "scripts": { "build": "node --check api/light.js && node --check server/light-api.js" },
+  "dependencies": { "@supabase/supabase-js": "2.114.0" }
+}

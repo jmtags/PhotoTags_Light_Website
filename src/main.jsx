@@ -33,6 +33,8 @@ import {
 } from 'lucide-react';
 import './styles.css';
 import SupportContact from './SupportContact';
+import LightAdmin from './LightAdmin';
+import LightPage from './LightPage';
 import BusinessTransactionsSection from './BusinessTransactionsSection';
 
 const ADMIN_USERNAME = 'admin';
@@ -756,7 +758,8 @@ function App() {
   const isPrivacyPage = window.location.pathname === '/privacy-policy';
   const isUsePolicyPage = window.location.pathname === '/use-policy';
   const isActivationPage = window.location.pathname === '/activate';
-  const isHomePage = !isAdminPage && !isBusinessPage && !isDownloadPage && !isPrivacyPage && !isUsePolicyPage && !isActivationPage;
+  const isLightPage = window.location.pathname === '/light';
+  const isHomePage = !isAdminPage && !isBusinessPage && !isDownloadPage && !isPrivacyPage && !isUsePolicyPage && !isActivationPage && !isLightPage;
 
   useEffect(() => {
     applySeoMetadata(window.location.pathname);
@@ -796,6 +799,8 @@ function App() {
       isCurrent = false;
     };
   }, [isHomePage]);
+
+  if (isLightPage) return <LightPage />;
 
   if (isAdminPage) {
     return <AdminPage />;
@@ -2782,6 +2787,7 @@ function AdminPage() {
         count: licenseData.devices.length,
         status: licenseStatus
       },
+      { id: 'light', label: 'PhotoTags Light', icon: Grid2X2 },
       {
         id: 'comments',
         label: 'Reviews',
@@ -2845,6 +2851,7 @@ function AdminPage() {
   }
 
   const renderAdminSection = () => {
+    if (activeAdminSection === 'light') return <LightAdmin password={adminPassword} />;
     if (activeAdminSection === 'licenses') {
       return (
         <AdminLicensesSection
