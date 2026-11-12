@@ -16,7 +16,11 @@ async function provider(path, options = {}, env = process.env, fetcher = fetch) 
     console.warn('[Light PayMongo request failed]',JSON.stringify({path,status:response.status,
       code:typeof issue?.code==='string' ? issue.code.slice(0,80) : 'unknown',
       field:typeof issue?.source?.pointer==='string' ? issue.source.pointer.slice(0,160) : undefined}));
-    throw new Error('light_payment_provider_unavailable');
+    const error=new Error('light_payment_provider_unavailable');
+    const safe=(value,max=160)=>typeof value==='string' && value.length<=max && /^[A-Za-z0-9_./\[\]-]+$/.test(value) ? value : undefined;
+    error.providerFailure={stage:path==='/payment_methods' ? 'payment_method' : path.endsWith('/attach') ? 'attachment' : path.endsWith('/cancel') ? 'cancellation' : path==='/payment_intents' ? 'intent_creation' : 'provider_verification',
+      httpStatus:response.status,code:safe(issue?.code,80)||'provider_rejected',field:safe(issue?.source?.pointer)};
+    throw error;
   }
   return result.data;
 }

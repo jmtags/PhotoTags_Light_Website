@@ -14,8 +14,11 @@ async function main(){
   for(const file of ['202611110001_light_licensing.sql','202611120001_light_inline_qr.sql'])await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
   await pg.exec("update light_plans set active=true,amount=2000 where id='weekly'");
   const db=database(pg),provider=fixture(),env={LIGHT_SIGNING_PRIVATE_KEY:signing.privateKey.export({type:'pkcs8',format:'pem'}),LIGHT_PAYMONGO_SECRET_KEY:'sk_test_fixture',LIGHT_ALLOWED_ORIGINS:'http://localhost:4187'};
-  let interruptNext=false;
+  let interruptNext=false,rejectMethod=false;
   const fetcher=async(url,options)=>{
+    if(rejectMethod && new URL(url).pathname==='/v1/payment_methods'){
+      rejectMethod=false;return {ok:false,status:400,json:async()=>({errors:[{code:'parameter_required',source:{pointer:'billing.phone'}}]})};
+    }
     const result=await provider.fetcher(url,options);
     if(interruptNext && new URL(url).pathname.endsWith('/attach')){
       interruptNext=false;const intent=[...provider.intents.values()].at(-1);
@@ -28,13 +31,14 @@ async function main(){
   process.env.VITE_LIGHT_LICENSING_ENABLED='true';process.env.VITE_LIGHT_API_ORIGIN='http://localhost:4187';process.env.VITE_LIGHT_PUBLIC_KEY_JWK=JSON.stringify(signing.publicKey.export({format:'jwk'}));
   server=await createServer({root:booth,configFile:path.join(booth,'vite.config.ts'),server:{port:4187,strictPort:true}});await server.listen();
   browser=await chromium.launch({channel:'chrome',headless:true});
-  for(const {mobile,legacy,oldService,incomplete} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true},{mobile:false,legacy:false,oldService:true},{mobile:false,legacy:false,incomplete:true}]){
-   interruptNext=!!incomplete;
-   let hostedSeeded=false;
+  for(const {mobile,legacy,oldService,incomplete,rejected} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true},{mobile:false,legacy:false,oldService:true},{mobile:false,legacy:false,incomplete:true},{mobile:false,legacy:false,rejected:true}]){
+   interruptNext=!!incomplete;rejectMethod=!!rejected;
+   let hostedSeeded=false,statusChecks=0;
    const context=await browser.newContext({viewport:mobile?{width:390,height:667}:{width:1440,height:1000},isMobile:mobile,hasTouch:mobile});
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.clock.install();
    await context.route('**/api/light?*',async route=>{
     const request=route.request();
+    if(request.url().includes('route=payment-status'))statusChecks++;
     if(oldService && request.postDataJSON()?.action==='qr-checkout')return route.fulfill({status:400,json:{ok:false,status:'invalid_challenge_request'}});
     const payload=request.postDataJSON();
     if(legacy && !hostedSeeded && request.url().includes('route=qr-checkout')) {
@@ -64,9 +68,29 @@ async function main(){
      expect(provider.checkouts.size).toBe(1); // Only the deliberately seeded historical purchase exists.
      await context.close();console.log('PASS older service: setup error shown without creating a hosted fallback or redirect.');continue;
    }
+   if(rejected){
+     await expect(dialog.getByRole('status')).toContainText('payment_method: parameter_required (billing.phone), HTTP 400');
+     await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeEnabled();
+     const verified=page.waitForResponse(r=>r.url().includes('route=payment-status') && r.status()===200);
+     await page.clock.runFor(7000);
+     expect((await (await verified).json()).status).toBe('qr_setup_incomplete');
+     await page.clock.runFor(50);
+     await expect(dialog.getByRole('status')).toContainText('billing.phone');
+     const checksBefore=statusChecks;await page.clock.fastForward(13000);expect(statusChecks).toBe(checksBefore);
+     await expect(dialog.locator('.spinner')).toHaveCount(0);
+     await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeEnabled();
+     const unfinished=[...provider.intents.values()].at(-1);
+     await dialog.getByRole('button',{name:'Show payment QR'}).click();
+     await expect(dialog.getByRole('img')).toBeVisible();expect(unfinished.attributes.status).toBe('cancelled');
+   }
    if(incomplete){
      await expect(dialog.getByRole('heading',{name:'Choose your license'})).toBeVisible();
      await expect(dialog.getByRole('status')).toContainText('QR setup did not finish');
+     const checksBefore=statusChecks;
+     await page.clock.fastForward(13000);
+     expect(statusChecks).toBe(checksBefore);
+     await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeEnabled();
+     await expect(dialog.locator('.spinner')).toHaveCount(0);
      const unfinished=[...provider.intents.values()].at(-1);
      await dialog.getByRole('button',{name:'Show payment QR'}).click();
      await expect(dialog.getByRole('img')).toBeVisible();expect(unfinished.attributes.status).toBe('cancelled');

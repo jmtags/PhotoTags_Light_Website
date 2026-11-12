@@ -71,7 +71,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const probe=await db.from('light_payments').select('payment_intent_id,qr_image_url,qr_expires_at').limit(0);
         const keyPresent=!!(env.LIGHT_PAYMONGO_SECRET_KEY || env.PAYMONGO_SECRET_KEY);
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
-        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-5'} });
+        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-6'} });
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -146,7 +146,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const paid = route === 'cancel-payment' ? await qr.cancel(db,session,env,fetcher) : await (session.payment_intent_id ? qr : payments).reconcile(db, session, env, fetcher);
         if (route === 'cancel-payment' && paid.status==='failed') return base.sendJson(response,200,{ok:true,status:'cancelled',paymentId:session.id});
         if (route === 'cancel-payment' && paid.status!=='paid') return base.sendJson(response,200,{ok:true,...(session.checkout_id ? qr.hostedView(paid) : qr.view(paid)),status:'payment_processing'});
-        if (paid.status === 'pending' && !session.payment_intent_id && !session.checkout_id) return base.sendJson(response,200,{ok:true,...qr.view(paid),status:'qr_setup_incomplete'});
+        if (paid.status === 'pending' && !session.payment_intent_id && !session.checkout_id) return base.sendJson(response,200,{ok:true,...qr.view(paid),status:'qr_setup_incomplete',setupStage:'intent_not_recorded'});
         if (paid.status !== 'paid') return base.sendJson(response, 200, { ok: true, ...(session.payment_intent_id ? qr.view(paid) : {...qr.hostedView(paid),status:paid.status}) });
       }
       const activation = checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id', body.installationId).maybeSingle());
@@ -158,7 +158,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     } catch (error) {
       const status = error.message;
       const unavailable = /configured|database_unavailable|provider_unavailable|fulfillment_failed/.test(status);
-      return base.sendJson(response, unavailable ? 503 : 400, { ok: false, status: /^([a-z_]+)$/.test(status) ? status : 'light_request_failed' });
+      return base.sendJson(response, unavailable ? 503 : 400, { ok: false, status: /^([a-z_]+)$/.test(status) ? status : 'light_request_failed', ...(error.providerFailure ? {providerFailure:error.providerFailure} : {}), ...(keys.UUID.test(error.lightPaymentId || '') ? {paymentId:error.lightPaymentId} : {}) });
     }
   };
 }

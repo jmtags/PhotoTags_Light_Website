@@ -28,7 +28,7 @@ function imageUrl(value) {
 }
 function view(session, status = session.status) {
   return { paymentId: session.id, status, planId: session.plan_id, amount: session.amount, currency: session.currency,
-    receiptEmail:session.customer_email, reference: session.reference_number, qrImageUrl: session.qr_image_url || undefined, expiresAt: session.qr_expires_at || undefined };
+    receiptEmail:session.customer_email, reference: session.reference_number, qrImageUrl: session.qr_image_url || undefined, expiresAt: session.qr_expires_at || undefined, setupStage:session.setup_stage, providerStatus:session.provider_status };
 }
 function hostedView(session) {
   return {...view(session,'hosted_pending'),checkoutUrl:session.checkout_url};
@@ -77,7 +77,7 @@ async function reconcile(db, session, env, fetcher, known) {
     return {...session,status:'failed'};
   }
   if (a.status==='awaiting_next_action') return saveCode(db,session,intent);
-  if (a.status==='awaiting_payment_method') return {...session,status:'qr_setup_incomplete',qr_image_url:null};
+  if (a.status==='awaiting_payment_method') return {...session,status:'qr_setup_incomplete',qr_image_url:null,setup_stage:'payment_method_or_attachment',provider_status:a.status};
   if (a.status==='processing') return {...session,status:'processing'};
   return session;
 }
@@ -93,6 +93,7 @@ async function saveCode(db, session, intent) {
 async function checkout(db, installationId, data, env, fetcher) {
   let reserved = checked(await db.rpc('light_reserve_qr',{p_installation_id:installationId,p_plan_id:data.planId,p_email:data.email}));
   let session = reserved.session;
+  try {
   if (session.checkout_id) {
     if (data.replaceHosted!==true) return hostedView(session);
     const previous=await replaceHosted(db,session,env,fetcher);
@@ -131,6 +132,7 @@ async function checkout(db, installationId, data, env, fetcher) {
   if (!/^pm_[A-Za-z0-9_]+$/.test(method?.id || '')) throw new Error('light_qr_unavailable');
   const attached = await payments.provider(`/payment_intents/${intent.id}/attach`,{method:'POST',body:{data:{attributes:{payment_method:method.id,...(intent.attributes.client_key ? {client_key:intent.attributes.client_key} : {})}}}},env,fetcher);
   return view(await reconcile(db,session,env,fetcher,attached));
+  } catch(error) { error.lightPaymentId=session.id; throw error; }
 }
 async function recover(db,session,intentId,env,fetcher) {
   const candidate = {...session,payment_intent_id:intentId};

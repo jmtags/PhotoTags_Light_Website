@@ -187,3 +187,22 @@ test('QR requires a payer name before reservation and sends it to PayMongo billi
   const request=provider.calls.find(c=>new URL(c.url).pathname==='/v1/payment_methods');
   assert.deepEqual(JSON.parse(request.options.body).data.attributes.billing,{name:'Juan Dela Cruz',email:order.email});
 });
+
+
+test('provider rejection returns safe diagnostics and the owned attempt remains recoverable',async()=>{
+  const provider=fixture(),realFetch=provider.fetcher;let reject=true;
+  provider.fetcher=async(url,options)=>{
+    if(reject && new URL(url).pathname==='/v1/payment_methods'){
+      reject=false;return {ok:false,status:400,json:async()=>({errors:[{code:'parameter_required',source:{pointer:'billing.phone'},detail:'Sensitive provider response must never be returned'}]})};
+    }
+    return realFetch(url,options);
+  };
+  const c=client(provider),failed=await c.call('qr-checkout',order);
+  assert.equal(failed.code,503);assert.equal(failed.status,'light_payment_provider_unavailable');
+  assert.deepEqual(failed.providerFailure,{stage:'payment_method',httpStatus:400,code:'parameter_required',field:'billing.phone'});
+  assert.ok(keys.UUID.test(failed.paymentId));assert.equal(JSON.stringify(failed).includes('Sensitive'),false);
+  const incomplete=await c.call('payment-status',{paymentId:failed.paymentId});
+  assert.equal(incomplete.setupStage,'payment_method_or_attachment');assert.equal(incomplete.providerStatus,'awaiting_payment_method');
+  assert.equal((await c.call('cancel-payment',{paymentId:failed.paymentId})).status,'cancelled');
+  const next=await c.call('qr-checkout',order);assert.ok(next.qrImageUrl);assert.notEqual(next.paymentId,failed.paymentId);
+});
