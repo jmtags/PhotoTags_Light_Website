@@ -29,7 +29,7 @@ async function main(){
     import React,{useState} from 'react';import{createRoot}from'react-dom/client';
     import{useLightLicense}from'/src/lightLicense.ts';import{PhotoDownloadQr}from'/src/PhotoDownloadQr.tsx';import'/src/style.css';
     function photo(color){const c=document.createElement('canvas');c.width=40;c.height=30;const x=c.getContext('2d');x.fillStyle=color;x.fillRect(0,0,40,30);return c.toDataURL('image/png');}
-    function App(){const l=useLightLicense(),[photos,setPhotos]=useState(()=>[photo('#ff4455')]),[online,setOnline]=useState(true),[preview]=useState(()=>photo('#2255ee'));return <main style={{maxWidth:420,padding:20}}><h1>Photo download check</h1><PhotoDownloadQr booth={{photos,preview,complete:true,rendering:false,online,lightLicense:l}}/><button onClick={()=>setPhotos([photo('#22aa66')])}>Change session</button><button onClick={()=>setOnline(!online)}>Toggle connection</button></main>;}
+    const cache=new Map();function App(){const l=useLightLicense(),[photos,setPhotos]=useState(()=>[photo('#ff4455')]),[online,setOnline]=useState(true),[preview,setPreview]=useState(()=>photo('#2255ee')),[automatic,setAutomatic]=useState(true),[visible,setVisible]=useState(true);return <main style={{maxWidth:420,padding:20}}><h1>Photo download check</h1>{visible&&<PhotoDownloadQr booth={{photos,preview,complete:true,rendering:false,online,lightLicense:l,autoDownloadQr:automatic,photoDownloadCache:cache}}/>}<button onClick={()=>{cache.clear();setPhotos([photo('#'+Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0'))]);setPreview(photo('#'+Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0')));}}>Change session</button><button onClick={()=>setOnline(!online)}>Toggle connection</button><button onClick={()=>setAutomatic(!automatic)}>Toggle automation</button><button onClick={()=>setVisible(!visible)}>Toggle panel</button></main>;}
     createRoot(document.getElementById('root')).render(<App/>);
   `,{compilerOptions:{jsx:4,module:99}}).outputText;}};
   vite=await createServer({root:booth,cacheDir:path.join(booth,'node_modules/.vite-light-integration'),plugins:[photoHarness],server:{port:4185,strictPort:true},configFile:path.join(booth,'vite.config.ts')});await vite.listen();
@@ -56,19 +56,22 @@ async function main(){
   await page.getByLabel('Light license key',{exact:true}).fill(grant.data.licenseKey);await page.getByRole('button',{name:'Activate Light license',exact:true}).click();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
   await page.goto('http://localhost:4185/__light-photo-test');
-  await expect(page.getByRole('button',{name:'Get download QR',exact:true})).toBeEnabled();expect(uploadSlots).toBe(0);
-  await page.getByRole('button',{name:'Get download QR',exact:true}).click();
-  await expect(page.getByRole('status')).toContainText('could not be uploaded');await expect(page.getByAltText('Scan to download your selected photo')).toHaveCount(0);
-  await page.getByRole('button',{name:'Get download QR',exact:true}).click();await expect(page.getByAltText('Scan to download your selected photo')).toBeVisible();
-  await expect(page.getByRole('link',{name:'Open download page'})).toHaveAttribute('href','https://www.phototags.app/download/LIGHTTEST2');expect(uploaded).toBe(1);
+  const raw=page.getByRole('group',{name:'Raw photo',exact:true}),decorated=page.getByRole('group',{name:'Decorated receipt',exact:true});
+  await expect(raw.getByAltText('Scan to download raw photo')).toBeVisible();
+  await expect(decorated.getByRole('status')).toContainText('Upload failed');expect(uploadSlots).toBe(2);
+  await page.clock.fastForward(2000);expect(uploadSlots).toBe(2);
+  await decorated.getByRole('button',{name:'Retry QR for decorated receipt'}).click();
+  await expect(page.getByAltText('Scan to download decorated receipt')).toBeVisible();expect(uploaded).toBe(2);expect(uploadSlots).toBe(3);
   const AxeBuilder=req('@axe-core/playwright').default;expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
   await page.screenshot({path:path.join(booth,'artifacts/light-photo-download-phone.png'),fullPage:true});
-  await page.getByLabel('Image to download').selectOption('receipt');await expect(page.getByAltText('Scan to download your selected photo')).toHaveCount(0);
-  await page.getByRole('button',{name:'Get download QR',exact:true}).click();await expect(page.getByAltText('Scan to download your selected photo')).toBeVisible();expect(uploaded).toBe(2);
-  await page.getByLabel('Image to download').selectOption('photo-0');await page.getByRole('button',{name:'Get download QR',exact:true}).click();await expect(page.getByAltText('Scan to download your selected photo')).toBeVisible();expect(uploadSlots).toBe(3);
-  await page.getByRole('button',{name:'Change session'}).click();await expect(page.getByAltText('Scan to download your selected photo')).toHaveCount(0);
-  await page.getByRole('button',{name:'Toggle connection'}).click();await expect(page.getByRole('button',{name:'Get download QR',exact:true})).toBeDisabled();await expect(page.getByRole('status')).toContainText('internet connection');
-  console.log('PASS: photo QR uses signed licensed Light API and existing upload service; no automatic upload, JPEG validation, failed upload hides QR, retry, photo/receipt selection, cache reuse, new session reset and offline gating.');
+  await page.getByRole('button',{name:'Toggle panel'}).click();await page.getByRole('button',{name:'Toggle panel'}).click();
+  await expect(raw.getByRole('img')).toBeVisible();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(3);
+  await page.getByRole('button',{name:'Change session'}).click();await expect(raw.getByRole('img')).toBeVisible();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(5);
+  await page.getByRole('button',{name:'Toggle automation'}).click();await page.getByRole('button',{name:'Change session'}).click();
+  await expect(raw.getByRole('img')).toHaveCount(0);await expect(decorated.getByRole('img')).toHaveCount(0);expect(uploadSlots).toBe(5);
+  await decorated.getByRole('button',{name:'Get QR for decorated receipt'}).click();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(6);
+  await page.getByRole('button',{name:'Toggle connection'}).click();await expect(raw.getByRole('button',{name:'Get QR for raw photo'})).toBeDisabled();
+  console.log('PASS: automatic raw and decorated QRs, isolated failed upload and retry, cached remount without duplicate upload, new session reset, manual mode and offline gating.');
   await page.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();
   transportDown=false;await pg.exec('update light_installations set blocked=true');
