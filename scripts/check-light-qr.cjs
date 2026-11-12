@@ -52,7 +52,7 @@ async function main(){
     await handler({method:request.method(),url:request.url(),body:request.postDataJSON(),headers:{...request.headers(),host:'localhost:4187','x-forwarded-for':crypto.randomUUID()}},response);await route.fulfill({status,headers,body});
    });
    await page.goto('http://localhost:4187');await page.getByRole('button',{name:'Light license',exact:true}).click();
-   await expect(page.locator('.light-license-settings [role=status]')).toContainText('Activate a PhotoTags Light license');
+   await expect(page.locator('.light-license-settings [role=status]')).toContainText('Activate a PhotoTags LRB license');
    await expect(page.getByRole('button',{name:'Activate Light license',exact:true})).toBeVisible();
    await page.getByRole('button',{name:'Activate license',exact:true}).click();
    const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();
@@ -101,7 +101,7 @@ async function main(){
      await dialog.getByLabel('Payer name').fill('Browser Fixture Payer');
      await dialog.getByRole('button',{name:'Switch to in-app QR'}).click();
    }
-   await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags Light license payment'})).toBeVisible();
+   await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags LRB license payment'})).toBeVisible();
    if(legacy)expect([...provider.checkouts.values()].at(-1).attributes.status).toBe('expired');
    await expect(dialog.getByRole('status')).toContainText('updates automatically');
    expect(page.url()).toBe('http://localhost:4187/');
