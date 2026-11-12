@@ -4,6 +4,7 @@ const keys = require('./light-crypto');
 const payments = require('./light-payments');
 const qr = require('./light-qr');
 const photoDownloads = require('./light-photo-downloads');
+const trials = require('./light-trial');
 function checked(result) {
   if (result.error) throw new Error(/^light_[a-z_]+$/.test(result.error.message || '') ? result.error.message : 'light_database_unavailable');
   return result.data;
@@ -43,7 +44,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     if (request.method === 'OPTIONS') { response.statusCode = 204; return response.end(); }
     const url = new URL(request.url || '/', 'https://light.local');
     const route = request.query?.route || url.searchParams.get('route');
-    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','photo-upload','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
+    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','photo-upload','start-trial','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
     if (request.method !== (route === 'plans' || route === 'admin' && request.method === 'GET' ? 'GET' : 'POST')) return base.sendJson(response, 405, { ok: false, status: 'method_not_allowed' });
     if (!base.checkRateLimit(request, `light_${route}`, route === 'challenge' ? 60 : 120, 60000)) return base.sendJson(response, 429, { ok: false, status: 'rate_limited' });
     try {
@@ -72,7 +73,8 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const probe=await db.from('light_payments').select('payment_intent_id,qr_image_url,qr_expires_at').limit(0);
         const keyPresent=!!(env.LIGHT_PAYMONGO_SECRET_KEY || env.PAYMONGO_SECRET_KEY);
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
-        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-8'} });
+        const trialProbe=await db.from('light_trials').select('installation_id').limit(0);
+        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, trialAvailable:!trialProbe.error, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-9'} });
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -108,10 +110,13 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
       if (route==='photo-upload') {
         if(data.acceptedUpload!==true)throw new Error('light_photo_consent_required');
         const license=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;
-        if(!license || license.status!=='active' || license.expires_at && Date.parse(license.expires_at)<=Date.now())throw new Error('light_license_required');
+        const paidActive=license?.status==='active' && (!license.expires_at || Date.parse(license.expires_at)>Date.now());
+        const trial=paidActive?null:await trials.read(db,body.installationId);
+        if(!paidActive&&!trials.active(trial))throw new Error('light_license_required');
         if(!base.checkRateLimit(request,'light_photo_'+body.installationId,10,60000))throw new Error('light_photo_rate_limited');
-        return base.sendJson(response,200,{ok:true,...await photoDownloads.reserve(body.installationId,fetcher)});
+        return base.sendJson(response,200,{ok:true,...await photoDownloads.reserve(body.installationId,fetcher),watermarkRequired:!paidActive});
       }
+      if(route==='start-trial'){if(data.acceptedTrial!==true)throw new Error('light_trial_terms_required');await trials.start(db,body.installationId);}
       if (['activate','checkout','qr-checkout'].includes(route)) {
         const current=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;
         if (current?.status==='active' && (!current.expires_at || Date.parse(current.expires_at)>Date.now())) throw new Error('light_already_licensed');
@@ -166,11 +171,16 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         if (paid.status !== 'paid') return base.sendJson(response, 200, { ok: true, ...(session.payment_intent_id ? qr.view(paid) : {...qr.hostedView(paid),status:paid.status}) });
       }
       const activation = checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id', body.installationId).maybeSingle());
-      const license = activation?.light_licenses;
-      if (!license || license.status !== 'active' || license.expires_at && Date.parse(license.expires_at) <= Date.now()) return base.sendJson(response, 200, { ok: true, status: 'unlicensed', permit: null });
+      let license = activation?.light_licenses;
+      let trial=null;
+      if (!license || license.status !== 'active' || license.expires_at && Date.parse(license.expires_at) <= Date.now()) {
+        trial=await trials.read(db,body.installationId);
+        if(!trials.active(trial))return base.sendJson(response,200,{ok:true,status:'unlicensed',permit:null,trialUsed:!!trial,trialExpiresAt:trial?.expires_at});
+        license=trials.license(trial);
+      }
       const token = keys.permit({ id: body.installationId, key_hash: proof.payload.keyHash }, license, env);
       checked(await db.from('light_installations').update({ last_permit_expires_at: new Date(keys.verify(token, env).exp * 1000).toISOString() }).eq('id', body.installationId));
-      return base.sendJson(response, 200, { ok: true, status: 'licensed', permit: token });
+      return base.sendJson(response, 200, { ok: true, status: 'licensed', permit: token, ...(trial?{trialUsed:true,trialExpiresAt:trial.expires_at}:{}) });
     } catch (error) {
       const status = error.message;
       const unavailable = /configured|database_unavailable|provider_unavailable|fulfillment_failed/.test(status);

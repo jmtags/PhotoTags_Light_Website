@@ -14,6 +14,7 @@ test.before(async()=>{
   await pg.exec(fs.readFileSync('supabase/migrations/202611110001_light_licensing.sql','utf8'));
   const migration=fs.readFileSync('supabase/migrations/202611120001_light_inline_qr.sql','utf8');await pg.exec(migration);await pg.exec(migration);
   const guard=fs.readFileSync("supabase/migrations/202611120002_light_single_active_license.sql","utf8");await pg.exec(guard);await pg.exec(guard);
+  const trial=fs.readFileSync("supabase/migrations/202611120003_light_one_day_trial.sql","utf8");await pg.exec(trial);await pg.exec(trial);
   await pg.exec("update light_plans set active=true,amount=2000 where id='weekly'");db=database(pg);
 });
 test.after(async()=>{await pg?.close();});
@@ -278,4 +279,41 @@ test('photo upload bridge rejects upstream errors and unexpected storage destina
   for(const patch of [{signedUploadUrl:'https://evil.test/upload'},{signedUploadUrl:'https://fixture.supabase.co/storage/v1/object/upload/sign/other-bucket/a.jpg'},{code:'../unsafe'},{expiresAt:'invalid'}]){
     await assert.rejects(photos.reserve(crypto.randomUUID(),async()=>({ok:true,json:async()=>({...valid,...patch})})),/response_invalid/);
   }
+});
+
+
+test('a Light trial is one signed, immutable 24-hour period and cannot restart after expiry',async()=>{
+  const provider=fixture(),c=client(provider);
+  assert.equal((await c.call('start-trial',{acceptedTrial:false})).status,'light_trial_terms_required');
+  const first=await c.call('start-trial',{acceptedTrial:true});assert.equal(first.status,'licensed',JSON.stringify(first));
+  const permit=keys.verify(first.permit,env);assert.equal(permit.plan,'trial');assert.equal(permit.trial,true);assert.equal(permit.watermarkRequired,true);
+  assert.ok(permit.exp-permit.iat<=86400);assert.ok(permit.exp-permit.iat>86390);
+  const again=await c.call('start-trial',{acceptedTrial:true});assert.equal(again.trialExpiresAt,first.trialExpiresAt);
+  assert.equal((await c.call('check',{})).trialUsed,true);
+  const outcomes=await Promise.all([c.call('start-trial',{acceptedTrial:true}),c.call('start-trial',{acceptedTrial:true})]);assert.ok(outcomes.every(r=>r.trialExpiresAt===first.trialExpiresAt));
+  await pg.query("update light_trials set started_at=now()-interval '25 hours',expires_at=now()-interval '1 hour' where installation_id=$1",[c.id]);
+  const expired=await c.call('start-trial',{acceptedTrial:true});assert.equal(expired.status,'unlicensed');assert.equal(expired.trialUsed,true);assert.equal(expired.permit,null);
+  assert.equal((await pg.query('select count(*)::int as n from light_trials where installation_id=$1',[c.id])).rows[0].n,1);assert.equal(provider.calls.length,0);
+});
+
+test('trials can upgrade through paid checkout and paid permits remove the watermark requirement',async()=>{
+  const provider=fixture(),c=client(provider);await c.call('start-trial',{acceptedTrial:true});
+  const qr=await c.call('qr-checkout',order);assert.ok(qr.qrImageUrl,JSON.stringify(qr));provider.pay([...provider.intents.values()][0].id);
+  const paid=await c.call('payment-status',{paymentId:qr.paymentId}),permit=keys.verify(paid.permit,env);
+  assert.equal(permit.plan,'weekly');assert.equal(permit.trial,false);assert.equal(permit.watermarkRequired,false);
+  assert.equal((await c.call('start-trial',{acceptedTrial:true})).status,'light_already_licensed');
+  assert.equal((await pg.query('select count(*)::int as n from light_trials where installation_id=$1',[c.id])).rows[0].n,1);
+});
+
+test('trial QR uploads require watermarking and blocked installations cannot use a saved trial online',async()=>{
+  const provider=fixture();provider.fetcher=async()=>({ok:true,json:async()=>({ok:true,code:'TRIALIMAGE1',signedUploadUrl:'https://fixture.supabase.co/storage/v1/object/upload/sign/photobooth-downloads/captures/a.jpg?token=fixture',expiresAt:new Date(Date.now()+1800000).toISOString()})});
+  const c=client(provider);await c.call('start-trial',{acceptedTrial:true});
+  const slot=await c.call('photo-upload',{acceptedUpload:true});assert.equal(slot.watermarkRequired,true);
+  await pg.query('update light_installations set blocked=true where id=$1',[c.id]);
+  assert.equal((await c.call('check',{})).status,'installation_blocked');assert.equal((await c.call('start-trial',{acceptedTrial:true})).status,'installation_blocked');
+  const migration=fs.readFileSync('supabase/migrations/202611120003_light_one_day_trial.sql','utf8');
+  assert.ok(fs.readFileSync('supabase/one_time_supabase_setup.sql','utf8').replace(/\r\n/g,'\n').includes(migration.replace(/\r\n/g,'\n')));
+  assert.equal((await pg.query("select has_function_privilege('anon','light_start_trial(uuid)','execute') as ok")).rows[0].ok,false);
+  assert.equal((await pg.query("select has_table_privilege('authenticated','light_trials','select') as ok")).rows[0].ok,false);
+  assert.deepEqual((await pg.query('select * from licenses')).rows,[{id:'apk-untouched'}]);
 });

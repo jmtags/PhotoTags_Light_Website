@@ -1,0 +1,13 @@
+# Light one-day trial
+
+Run only `supabase/migrations/202611120003_light_one_day_trial.sql` in Supabase SQL Editor after the original Light licensing migration. Do not rerun the complete setup on an existing database. This creates the isolated `light_trials` table and service-role-only `light_start_trial` RPC. No APK tables, trial process, payment handlers or settings change. The trial button appears after the migration is available and the existing Light service/booth updates are deployed. No environment variable or new Vercel project is needed.
+
+Settings > Light license > Start 1-day free trial starts exactly 24 hours on the server, once per registered installation. Revisiting, reconnecting and concurrent starts return the same expiry. Expired trials cannot restart. An active paid license takes precedence; users can buy or activate a paid license during a trial. Trial state is separate from purchased licenses, plans and payments, so it never prevents an upgrade or changes existing payment fulfillment. Registration is an app/browser installation, not a hardware identifier; clearing data or using another browser creates another installation under the existing licensing model.
+
+Trial permits are signed, tied to the installation key and capped at the original trial expiry. Offline use stops at that expiry. Blocked installations receive no new permits, but previously issued offline permits retain their documented expiry. Trial activation requires an explicit button click and internet; merely visiting the booth does not start the clock.
+
+Trial output carries a PhotoTags Light FREE TRIAL watermark before thermal rasterization, local receipt saving or QR JPEG upload. Both decorated receipts and raw-photo QR files are covered. Reprints under a trial are marked as well. The upload slot response independently tells the booth when watermarking is required; client output is still commercial browser-side protection, not tamper-proof hardware DRM. Upgrading produces clean new outputs; previously generated trial downloads and saved receipts retain their watermark.
+
+The Step 3 editor now uses a separate 1200-pixel-wide colour composition rather than enlarging the printer's 384/576-dot dithered raster. Printer output keeps its native profile. Decorated QR downloads use the higher-resolution composition. Existing original photos stay in local history.
+
+Validate with the website regression suite, isolated SQL trial tests, the real browser upload/licensing integration check, booth build and kiosk tests. Automated checks use fixture photos/storage/payment providers, not production trials or charges.

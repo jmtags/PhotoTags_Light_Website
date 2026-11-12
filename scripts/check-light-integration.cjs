@@ -11,7 +11,7 @@ async function main(){
  const env={LIGHT_SIGNING_PRIVATE_KEY:key.privateKey.export({type:'pkcs8',format:'pem'}),ADMIN_PASSWORD:'light-fixture-admin',LIGHT_ALLOWED_ORIGINS:'http://localhost:4185,http://localhost:4186',LIGHT_PAYMONGO_SECRET_KEY:'sk_test_fixture'};
  const pg=new PGlite();let vite,website,browser;
  try{
-  await pg.exec('create role anon;create role authenticated;create role service_role;');await pg.exec(fs.readFileSync('supabase/migrations/202611110001_light_licensing.sql','utf8'));
+  await pg.exec('create role anon;create role authenticated;create role service_role;');await pg.exec(fs.readFileSync('supabase/migrations/202611110001_light_licensing.sql','utf8'));await pg.exec(fs.readFileSync('supabase/migrations/202611120003_light_one_day_trial.sql','utf8'));
   await pg.exec("update light_plans set active=true,amount=15000 where id='monthly'");
   const db=database(pg);const grant=await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly',email:'fixture@example.test'}});if(grant.error)throw grant.error;
   let uploadSlots=0,uploaded=0,rejectUpload=true;
@@ -125,6 +125,37 @@ async function main(){
   await adminPage.screenshot({path:path.join(booth,'artifacts/light-admin-plans.png'),fullPage:true});
   await adminPage.goto('http://localhost:4186/light');await expect(adminPage.getByRole('heading',{name:'Light license terms',exact:true})).toBeVisible();
   console.log('PASS: separate website Light admin navigation, installations, plans and public terms page.');
+  const trialContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+  await trialContext.route('**/api/light?*',async route=>{
+    const request=route.request();let status=200,headers={},body='';const response={setHeader(k,v){headers[k]=v;},end(v){body=v||'';}};Object.defineProperty(response,'statusCode',{get:()=>status,set:v=>status=v});
+    await handler({method:request.method(),url:request.url(),body:request.postDataJSON(),headers:{...request.headers(),host:'localhost:4185','x-forwarded-for':crypto.randomUUID()}},response);await route.fulfill({status,headers,body});
+  });
+  let trialUploads=0;
+  await trialContext.route('https://fixture.supabase.co/storage/v1/object/upload/sign/**',async route=>{
+    const decoded=await req('sharp')(route.request().postDataBuffer()).removeAlpha().raw().toBuffer({resolveWithObject:true});
+    let dark=0;for(let i=0;i<decoded.data.length;i+=decoded.info.channels)if(Math.max(decoded.data[i],decoded.data[i+1],decoded.data[i+2])<140)dark++;
+    expect(dark).toBeGreaterThan(0);trialUploads++;await route.fulfill({status:200,json:{ok:true}});
+  });
+  const trialPage=await trialContext.newPage();await trialPage.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
+  await trialPage.getByRole('button',{name:'Light license',exact:true}).click();await trialPage.getByRole('button',{name:'Start 1-day free trial',exact:true}).click();
+  await expect(trialPage.locator('.light-license-settings [role=status]')).toContainText('1-day free trial is active');
+  await expect(trialPage.getByRole('button',{name:'Buy a Light license',exact:true})).toBeEnabled();
+  await expect(trialPage.getByRole('button',{name:'Start 1-day free trial',exact:true})).toHaveCount(0);
+  await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
+  await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();
+  const trialJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const trialJob=fs.readFileSync(await (await trialJobEvent).path());
+  await trialPage.goto('http://localhost:4185/__light-photo-test');
+  await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toBeVisible();expect(trialUploads).toBe(2);
+  await trialPage.screenshot({path:path.join(booth,'artifacts/light-trial-qr-phone.png'),fullPage:true});
+  const upgrade=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly',email:'trial-upgrade@example.test'}})).data;
+  await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Light license',exact:true}).click();
+  await trialPage.getByLabel('Light license key',{exact:true}).fill(upgrade.licenseKey);await trialPage.getByRole('button',{name:'Activate Light license',exact:true}).click();
+  await expect(trialPage.locator('.light-license-settings [role=status]')).toContainText('License active');
+  await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
+  await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
+  expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
+  await trialContext.close();console.log('PASS: explicit one-day trial, upgrade available during trial, watermark pixels in both QR JPEGs and native print raster changes after paid activation.');
+
  }finally{await browser?.close();await vite?.close();await website?.close();await pg.close();delete process.env.VITE_LIGHT_LICENSING_ENABLED;delete process.env.VITE_LIGHT_API_ORIGIN;delete process.env.VITE_LIGHT_PUBLIC_KEY_JWK;}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
