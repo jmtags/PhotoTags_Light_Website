@@ -61,6 +61,7 @@ async function main(){
    }
    await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags Light license payment'})).toBeVisible();
    if(legacy)expect([...provider.checkouts.values()].at(-1).attributes.status).toBe('expired');
+   await expect(dialog.getByRole('status')).toContainText('updates automatically');
    expect(page.url()).toBe('http://localhost:4187/');
    const issues=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();expect(issues.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}))).toEqual([]);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
