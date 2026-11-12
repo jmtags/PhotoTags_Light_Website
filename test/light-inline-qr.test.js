@@ -13,6 +13,7 @@ test.before(async()=>{
   pg=new PGlite();await pg.exec("create role anon;create role authenticated;create role service_role;create table licenses(id text);insert into licenses values('apk-untouched');");
   await pg.exec(fs.readFileSync('supabase/migrations/202611110001_light_licensing.sql','utf8'));
   const migration=fs.readFileSync('supabase/migrations/202611120001_light_inline_qr.sql','utf8');await pg.exec(migration);await pg.exec(migration);
+  const guard=fs.readFileSync("supabase/migrations/202611120002_light_single_active_license.sql","utf8");await pg.exec(guard);await pg.exec(guard);
   await pg.exec("update light_plans set active=true,amount=2000 where id='weekly'");db=database(pg);
 });
 test.after(async()=>{await pg?.close();});
@@ -205,4 +206,48 @@ test('provider rejection returns safe diagnostics and the owned attempt remains 
   assert.equal(incomplete.setupStage,'payment_method_or_attachment');assert.equal(incomplete.providerStatus,'awaiting_payment_method');
   assert.equal((await c.call('cancel-payment',{paymentId:failed.paymentId})).status,'cancelled');
   const next=await c.call('qr-checkout',order);assert.ok(next.qrImageUrl);assert.notEqual(next.paymentId,failed.paymentId);
+});
+
+
+test('active installations cannot buy or replace licenses, including lifetime and expired offline permits',async()=>{
+  for(const lifetime of [false,true]){
+    const provider=fixture(),c=client(provider),first=await c.call('qr-checkout',order);
+    provider.pay([...provider.intents.values()][0].id);
+    assert.equal((await c.call('payment-status',{paymentId:first.paymentId})).status,'licensed');
+    const current=(await pg.query('select l.* from light_activations a join light_licenses l on l.id=a.license_id where a.installation_id=$1',[c.id])).rows[0];
+    if(lifetime)await pg.query('update light_licenses set expires_at=null where id=$1',[current.id]);
+    await pg.query("update light_installations set last_permit_expires_at=now()-interval '1 day' where id=$1",[c.id]);
+    const calls=provider.calls.length;
+    for(const route of ['checkout','qr-checkout','activate']){
+      const result=await c.call(route,{...order,licenseKey:'PTL-OTHERLICENSE123456'});assert.equal(result.code,409);assert.equal(result.status,'light_already_licensed');
+    }
+    assert.equal(provider.calls.length,calls);
+    for(const rpc of ['light_reserve_checkout','light_reserve_qr']){
+      const result=await db.rpc(rpc,{p_installation_id:c.id,p_plan_id:'weekly',p_email:order.email});assert.match(result.error.message,/light_already_licensed/);
+    }
+    const other=await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly'}});
+    assert.equal((await db.rpc('light_activate',{p_installation_id:c.id,p_license_key:other.data.licenseKey})).data.status,'light_already_licensed');
+    assert.equal((await db.rpc('light_activate',{p_installation_id:c.id,p_license_key:current.license_key})).data.status,'licensed');
+    assert.equal((await pg.query('select license_id from light_activations where installation_id=$1',[c.id])).rows[0].license_id,current.id);
+    if(!lifetime){
+      await pg.query("update light_licenses set expires_at=now()-interval '1 second' where id=$1",[current.id]);
+      const next=await c.call('qr-checkout',order);assert.ok(next.qrImageUrl);assert.notEqual(next.paymentId,first.paymentId);
+      assert.equal((await c.call('cancel-payment',{paymentId:next.paymentId})).status,'cancelled');
+      assert.equal((await c.call('activate',{licenseKey:other.data.licenseKey})).status,'licensed');
+    }
+  }
+});
+
+test('manual activation cannot race a pending payment or replace a concurrently activated key',async()=>{
+  const provider=fixture(),c=client(provider),first=await c.call('qr-checkout',order);
+  const a=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly'}})).data.licenseKey;
+  const b=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly'}})).data.licenseKey;
+  assert.equal((await c.call('activate',{licenseKey:a})).status,'light_payment_pending');
+  assert.equal((await db.rpc('light_activate',{p_installation_id:c.id,p_license_key:a})).data.status,'light_payment_pending');
+  await c.call('cancel-payment',{paymentId:first.paymentId});
+  const outcomes=await Promise.all([a,b].map(p_license_key=>db.rpc('light_activate',{p_installation_id:c.id,p_license_key})));
+  assert.deepEqual(outcomes.map(x=>x.data.status).sort(),['licensed','light_already_licensed'].sort());
+  const sql=fs.readFileSync('supabase/migrations/202611120002_light_single_active_license.sql','utf8');
+  assert.ok(fs.readFileSync('supabase/one_time_supabase_setup.sql','utf8').replace(/\r\n/g,'\n').includes(sql.replace(/\r\n/g,'\n')));
+  assert.equal((await pg.query("select has_function_privilege('anon','light_reserve_qr(uuid,text,text)','execute') as ok")).rows[0].ok,false);
 });

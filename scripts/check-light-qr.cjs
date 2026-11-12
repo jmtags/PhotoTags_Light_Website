@@ -11,7 +11,7 @@ async function main(){
  const signing=crypto.generateKeyPairSync('ec',{namedCurve:'prime256v1'}),pg=new PGlite();let server,browser;
  try {
   await pg.exec('create role anon;create role authenticated;create role service_role;');
-  for(const file of ['202611110001_light_licensing.sql','202611120001_light_inline_qr.sql'])await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+  for(const file of ['202611110001_light_licensing.sql','202611120001_light_inline_qr.sql','202611120002_light_single_active_license.sql'])await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
   await pg.exec("update light_plans set active=true,amount=2000 where id='weekly'");
   const db=database(pg),provider=fixture(),env={LIGHT_SIGNING_PRIVATE_KEY:signing.privateKey.export({type:'pkcs8',format:'pem'}),LIGHT_PAYMONGO_SECRET_KEY:'sk_test_fixture',LIGHT_ALLOWED_ORIGINS:'http://localhost:4187'};
   let interruptNext=false,rejectMethod=false;
@@ -137,6 +137,9 @@ async function main(){
    await expect(dialog.getByText('Light Weekly',{exact:true})).toBeVisible();await dialog.getByRole('button',{name:'Done',exact:true}).click();
    await expect(page.locator('.light-license-facts')).toContainText('Light Weekly');
    await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
+   await expect(page.getByRole('button',{name:'License active',exact:true})).toBeDisabled();
+   await expect(page.getByRole('button',{name:'Activate Light license',exact:true})).toBeDisabled();
+   await expect(page.getByLabel('Light license key',{exact:true})).toBeDisabled();
    expect(errors).toEqual([]);await context.close();
    console.log(`PASS ${legacy?'hosted-to-inline QR recovery':mobile?'phone':'desktop'}: consent and plan gates, inline QR, no redirect, close/reopen at terms, unpaid attempt cancelled before replacement, automatic verified activation, updated plan, accessibility.`);
   }

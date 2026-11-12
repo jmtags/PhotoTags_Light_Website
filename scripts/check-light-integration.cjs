@@ -50,6 +50,8 @@ async function main(){
   await page.clock.fastForward(8*86400000);
   await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toHaveCount(0);
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('expired');
+  await expect(page.getByRole('button',{name:'License active',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Activate Light license',exact:true})).toBeDisabled();
   // Verify the client rejects signature tampering and permits for another identity.
   const verified=await page.evaluate(async({pub})=>{
    const module=await import('/src/lightPermit.ts');const idb=await new Promise((resolve,reject)=>{const r=indexedDB.open('phototags-light-license',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});

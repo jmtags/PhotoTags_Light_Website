@@ -71,7 +71,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const probe=await db.from('light_payments').select('payment_intent_id,qr_image_url,qr_expires_at').limit(0);
         const keyPresent=!!(env.LIGHT_PAYMONGO_SECRET_KEY || env.PAYMONGO_SECRET_KEY);
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
-        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-6'} });
+        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-7'} });
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -104,6 +104,14 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         p_key_hash: proof.payload.keyHash, p_name: validText(data.name) ? data.name.trim() : 'My PhotoTags Light booth',
         p_platform: validText(data.platform) ? data.platform : 'Web', p_app_version: 'light-1' }));
       if (registration.status !== 'registered') throw new Error(registration.status);
+      if (['activate','checkout','qr-checkout'].includes(route)) {
+        const current=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;
+        if (current?.status==='active' && (!current.expires_at || Date.parse(current.expires_at)>Date.now())) throw new Error('light_already_licensed');
+        if (route==='activate') {
+          const pending=checked(await db.from('light_payments').select('id').eq('installation_id',body.installationId).eq('status','pending').limit(1));
+          if (pending.length) throw new Error('light_payment_pending');
+        }
+      }
       if (route === 'activate') {
         if (!/^PTL-[A-Z0-9-]{12,80}$/.test(data.licenseKey || '')) throw new Error('invalid_light_license_key');
         const activated = checked(await db.rpc('light_activate', { p_installation_id: body.installationId, p_license_key: data.licenseKey }));
@@ -158,7 +166,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     } catch (error) {
       const status = error.message;
       const unavailable = /configured|database_unavailable|provider_unavailable|fulfillment_failed/.test(status);
-      return base.sendJson(response, unavailable ? 503 : 400, { ok: false, status: /^([a-z_]+)$/.test(status) ? status : 'light_request_failed', ...(error.providerFailure ? {providerFailure:error.providerFailure} : {}), ...(keys.UUID.test(error.lightPaymentId || '') ? {paymentId:error.lightPaymentId} : {}) });
+      return base.sendJson(response, status==='light_already_licensed' || status==='light_payment_pending' ? 409 : unavailable ? 503 : 400, { ok: false, status: /^([a-z_]+)$/.test(status) ? status : 'light_request_failed', ...(error.providerFailure ? {providerFailure:error.providerFailure} : {}), ...(keys.UUID.test(error.lightPaymentId || '') ? {paymentId:error.lightPaymentId} : {}) });
     }
   };
 }
