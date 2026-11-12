@@ -33,7 +33,7 @@ function verify(token, env) {
   return payload;
 }
 function challenge(body, env) {
-  if (!UUID.test(body.installationId || '') || !['register', 'check', 'activate', 'checkout', 'payment-status'].includes(body.action) ||
+  if (!UUID.test(body.installationId || '') || !['register', 'check', 'activate', 'checkout', 'qr-checkout', 'payment-status'].includes(body.action) ||
       !/^[A-Za-z0-9_-]{43}$/.test(body.bodyHash || '')) throw new Error('invalid_challenge_request');
   return sign({ product: PRODUCT, type: 'challenge', jti: crypto.randomUUID(), sub: body.installationId,
     keyHash: keyHash(body.publicKey), action: body.action, bodyHash: body.bodyHash,

@@ -2,8 +2,9 @@ const crypto = require('node:crypto');
 const base = require('./light-utils');
 const keys = require('./light-crypto');
 const payments = require('./light-payments');
+const qr = require('./light-qr');
 function checked(result) {
-  if (result.error) throw new Error('light_database_unavailable');
+  if (result.error) throw new Error(/^light_[a-z_]+$/.test(result.error.message || '') ? result.error.message : 'light_database_unavailable');
   return result.data;
 }
 function admin(request, env) {
@@ -41,7 +42,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     if (request.method === 'OPTIONS') { response.statusCode = 204; return response.end(); }
     const url = new URL(request.url || '/', 'https://light.local');
     const route = request.query?.route || url.searchParams.get('route');
-    if (!['plans','admin','challenge','register','check','activate','checkout','payment-status','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
+    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
     if (request.method !== (route === 'plans' || route === 'admin' && request.method === 'GET' ? 'GET' : 'POST')) return base.sendJson(response, 405, { ok: false, status: 'method_not_allowed' });
     if (!base.checkRateLimit(request, `light_${route}`, route === 'challenge' ? 60 : 120, 60000)) return base.sendJson(response, 429, { ok: false, status: 'rate_limited' });
     try {
@@ -53,11 +54,16 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const raw = Buffer.concat(chunks).toString('utf8');
         if (!payments.verifyWebhook(raw, request.headers['paymongo-signature'], env)) return base.sendJson(response, 401, { ok: false, status: 'invalid_light_webhook_signature' });
         const event = JSON.parse(raw); const resource = event.data?.attributes?.data || event.data?.data;
-        if (resource?.attributes?.metadata?.product !== keys.PRODUCT) return base.sendJson(response, 200, { ok: true, status: 'ignored' });
-        const id = resource.attributes.metadata.light_payment_id;
-        if (!keys.UUID.test(id || '')) throw new Error('invalid_light_payment');
-        const session = checked(await db.from('light_payments').select('*').eq('id', id).maybeSingle());
-        if (session) await payments.reconcile(db, session, env, fetcher);
+        const metadata = resource?.attributes?.metadata;
+        let session;
+        if (metadata?.product === keys.PRODUCT) {
+          if (!keys.UUID.test(metadata.light_payment_id || '')) throw new Error('invalid_light_payment');
+          session = checked(await db.from('light_payments').select('*').eq('id',metadata.light_payment_id).maybeSingle());
+        } else {
+          const intentId = resource?.attributes?.payment_intent_id;
+          if (/^pi_[A-Za-z0-9_]+$/.test(intentId || '')) session = checked(await db.from('light_payments').select('*').eq('payment_intent_id',intentId).maybeSingle());
+        }
+        if (session) await (session.payment_intent_id ? qr : payments).reconcile(db,session,env,fetcher);
         return base.sendJson(response, 200, { ok: true });
       }
       if (route === 'plans') {
@@ -76,10 +82,10 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         }
         const body = await readBody(request);
         if (body.action === 'recover_checkout') {
-          if (!keys.UUID.test(body.id || '') || !/^cs_[A-Za-z0-9_]+$/.test(body.values?.checkoutId || '')) throw new Error('invalid_light_checkout_recovery');
+          if (!keys.UUID.test(body.id || '') || !/^(cs|pi)_[A-Za-z0-9_]+$/.test(body.values?.checkoutId || '')) throw new Error('invalid_light_checkout_recovery');
           const session = checked(await db.from('light_payments').select('*').eq('id', body.id).maybeSingle());
           if (!session) throw new Error('light_payment_not_found');
-          const recovered = await payments.recover(db, session, body.values.checkoutId, env, fetcher);
+          const recovered = await (body.values.checkoutId.startsWith('pi_') ? qr : payments).recover(db, session, body.values.checkoutId, env, fetcher);
           return base.sendJson(response, 200, { ok: true, status: recovered.status });
         }
         adminValues(body);
@@ -100,6 +106,10 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const activated = checked(await db.rpc('light_activate', { p_installation_id: body.installationId, p_license_key: data.licenseKey }));
         if (activated.status !== 'licensed') throw new Error(activated.status);
       }
+      if (route === 'qr-checkout') {
+        if (!email(data.email) || data.acceptedAgreement !== true) throw new Error('light_email_and_agreement_required');
+        return base.sendJson(response,200,{ok:true,...await qr.checkout(db,body.installationId,data,env,fetcher)});
+      }
       if (route === 'checkout') {
         if (!email(data.email) || data.acceptedAgreement !== true) throw new Error('light_email_and_agreement_required');
         const plan = checked(await db.from('light_plans').select('*').eq('id', data.planId).eq('active', true).maybeSingle());
@@ -114,7 +124,8 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         if (boothUrl.protocol !== 'https:') throw new Error('light_booth_url_invalid');
         boothUrl.searchParams.set('light_payment', session.id);
         const checkout = await payments.provider('/checkout_sessions', { version: 'v2', method: 'POST', headers: { 'Idempotency-Key': session.id }, body: { data: { attributes: {
-          line_items: [{ name: plan.name, amount: session.amount, currency: session.currency, quantity: 1 }],
+          description: `PhotoTags Light license - ${plan.name} - ${session.reference_number}`,
+          line_items: [{ name: `PhotoTags Light license - ${plan.name}`, amount: session.amount, currency: session.currency, quantity: 1 }],
           payment_method_types: ['qrph'], success_url: boothUrl.href, cancel_url: boothUrl.href,
           reference_number: session.reference_number, metadata: { product: keys.PRODUCT, light_payment_id: session.id, installation_id: body.installationId }
         } } } }, env, fetcher);
@@ -127,8 +138,8 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         if (!keys.UUID.test(data.paymentId || '')) throw new Error('invalid_light_payment');
         const session = checked(await db.from('light_payments').select('*').eq('id', data.paymentId).eq('installation_id', body.installationId).maybeSingle());
         if (!session) throw new Error('light_payment_not_found');
-        const paid = await payments.reconcile(db, session, env, fetcher);
-        if (paid.status !== 'paid') return base.sendJson(response, 200, { ok: true, status: paid.status });
+        const paid = await (session.payment_intent_id ? qr : payments).reconcile(db, session, env, fetcher);
+        if (paid.status !== 'paid') return base.sendJson(response, 200, { ok: true, ...(session.payment_intent_id ? qr.view(paid) : {status:paid.status,paymentId:session.id,checkoutUrl:session.checkout_url || undefined}) });
       }
       const activation = checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id', body.installationId).maybeSingle());
       const license = activation?.light_licenses;

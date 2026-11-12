@@ -38,7 +38,7 @@ async function main(){
   await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('installation blocked');
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toHaveCount(0);
-  await pg.exec('update light_installations set blocked=false');await page.getByRole('button',{name:'Check license / payment',exact:true}).click();
+  await pg.exec('update light_installations set blocked=false');await page.getByText('Installation & offline access',{exact:true}).click();await page.getByRole('button',{name:'Check license / payment',exact:true}).click();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
   await page.screenshot({path:path.join(booth,'artifacts/light-license-phone.png'),fullPage:true});
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();

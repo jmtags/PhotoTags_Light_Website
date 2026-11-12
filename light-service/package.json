@@ -3,6 +3,6 @@
   "private": true,
   "version": "1.0.0",
   "engines": { "node": ">=22" },
-  "scripts": { "build": "node --check api/light.js && node --check server/light-api.js" },
+  "scripts": { "build": "node --check api/light.js && node --check server/light-api.js && node --check server/light-qr.js" },
   "dependencies": { "@supabase/supabase-js": "2.114.0" }
 }
