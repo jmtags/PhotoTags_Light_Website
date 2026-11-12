@@ -2,6 +2,8 @@
 
 This update changes only PhotoTags Light. APK payment routes, tables, webhooks and plans remain unchanged. Hosted Light purchases already in progress can still be reconciled through their original checkout IDs.
 
+The QR implementation is part of the existing `PhotoTags_Light_Website` repository at `C:/codes/PhotoTags_Light_Website`, inside `light-service/server/light-qr.js`. Deploy it through the existing Light service Vercel project. No additional repository, local project or Vercel project is required for QR payments. The booth's public API origin and existing server credentials stay the same.
+
 ## Production rollout
 
 1. In the existing Supabase project, run only `supabase/migrations/202611120001_light_inline_qr.sql`. It adds columns and service-role-only RPCs to Light objects. It requires the original Light migration. Do not rerun the full one-time setup on an existing production database.
