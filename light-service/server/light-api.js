@@ -5,6 +5,7 @@ const payments = require('./light-payments');
 const qr = require('./light-qr');
 const photoDownloads = require('./light-photo-downloads');
 const trials = require('./light-trial');
+const usage = require('./light-usage');
 function checked(result) {
   if (result.error) throw new Error(/^light_[a-z_]+$/.test(result.error.message || '') ? result.error.message : 'light_database_unavailable');
   return result.data;
@@ -44,8 +45,8 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     if (request.method === 'OPTIONS') { response.statusCode = 204; return response.end(); }
     const url = new URL(request.url || '/', 'https://light.local');
     const route = request.query?.route || url.searchParams.get('route');
-    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','photo-upload','start-trial','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
-    if (request.method !== (route === 'plans' || route === 'admin' && request.method === 'GET' ? 'GET' : 'POST')) return base.sendJson(response, 405, { ok: false, status: 'method_not_allowed' });
+    if (!['plans','admin','admin-usage','usage','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','photo-upload','start-trial','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
+    if (request.method !== (route === 'plans' || route === 'admin-usage' || route === 'admin' && request.method === 'GET' ? 'GET' : 'POST')) return base.sendJson(response, 405, { ok: false, status: 'method_not_allowed' });
     if (!base.checkRateLimit(request, `light_${route}`, route === 'challenge' ? 60 : 120, 60000)) return base.sendJson(response, 429, { ok: false, status: 'rate_limited' });
     try {
       const db = client();
@@ -75,6 +76,10 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
         const trialProbe=await db.from('light_trials').select('installation_id').limit(0);
         return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, trialAvailable:!trialProbe.error, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-9'} });
+      }
+      if(route==='admin-usage'){
+        if(!admin(request,env))return base.sendJson(response,401,{ok:false,status:'unauthorized'});
+        return base.sendJson(response,200,{ok:true,...await usage.admin(db,url.searchParams.get('offset'),url.searchParams.get('search'))});
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -107,6 +112,11 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         p_key_hash: proof.payload.keyHash, p_name: validText(data.name) ? data.name.trim() : 'My PhotoTags Light booth',
         p_platform: validText(data.platform) ? data.platform : 'Web', p_app_version: 'light-1' }));
       if (registration.status !== 'registered') throw new Error(registration.status);
+      if(route==='usage'){
+        if(!keys.UUID.test(data.visitId||''))throw new Error('invalid_light_usage');
+        if(!base.checkRateLimit(request,'light_usage_'+body.installationId,10,60000))throw new Error('rate_limited');
+        return base.sendJson(response,200,{ok:true,...await usage.report(db,body.installationId,data.visitId,data)});
+      }
       if (route==='photo-upload') {
         if(data.acceptedUpload!==true)throw new Error('light_photo_consent_required');
         const license=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;

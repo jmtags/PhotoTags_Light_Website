@@ -12,6 +12,7 @@ async function main(){
  const pg=new PGlite();let vite,website,browser;
  try{
   await pg.exec('create role anon;create role authenticated;create role service_role;');await pg.exec(fs.readFileSync('supabase/migrations/202611110001_light_licensing.sql','utf8'));await pg.exec(fs.readFileSync('supabase/migrations/202611120003_light_one_day_trial.sql','utf8'));
+  await pg.exec(fs.readFileSync('supabase/migrations/202611120004_light_usage_tracking.sql','utf8'));
   await pg.exec("update light_plans set active=true,amount=15000 where id='monthly'");
   const db=database(pg);const grant=await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly',email:'fixture@example.test'}});if(grant.error)throw grant.error;
   let uploadSlots=0,uploaded=0,rejectUpload=true;
@@ -125,6 +126,8 @@ async function main(){
   await adminPage.getByRole('button',{name:'Installations',exact:true}).click();await expect(adminPage.locator('.light-admin tbody')).toContainText('My PhotoTags LRB booth');
   await adminPage.getByRole('button',{name:'Plans',exact:true}).click();await expect(adminPage.getByRole('button',{name:'Save Light plan'})).toHaveCount(3);
   await adminPage.screenshot({path:path.join(booth,'artifacts/light-admin-plans.png'),fullPage:true});
+  await adminPage.getByRole('button',{name:'Usage',exact:true}).click();await expect(adminPage.getByRole('heading',{name:'PhotoTags LRB usage',exact:true})).toBeVisible();
+  await expect(adminPage.locator('.light-usage')).toContainText('Unique installations');
   await adminPage.goto('http://localhost:4186/light');await expect(adminPage.getByRole('heading',{name:'Light license terms',exact:true})).toBeVisible();
   console.log('PASS: separate website Light admin navigation, installations, plans and public terms page.');
   const trialContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
@@ -140,7 +143,9 @@ async function main(){
     let dark=0;for(let i=0;i<decoded.data.length;i+=decoded.info.channels)if(Math.max(decoded.data[i],decoded.data[i+1],decoded.data[i+2])<140)dark++;
     expect(dark).toBeGreaterThan(0);trialUploads++;await route.fulfill({status:200,json:{ok:true}});
   });
-  const trialPage=await trialContext.newPage();await trialPage.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
+  const trialPage=await trialContext.newPage();
+  await trialPage.routeWebSocket(/wss:\/\/localhost:\d+\/?/,ws=>ws.onMessage(message=>{if(message==='ping')return;const r=JSON.parse(message.toString());ws.send(JSON.stringify({uid:r.uid,result:r.call==='getVersion'?'2.3.0':r.call==='printers.find'?['Fixture thermal queue']:null}));}));
+  await trialPage.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
   const trialWall=trialPage.getByRole('dialog',{name:'Activate to launch your booth'});
   for(const section of ['Branding','Camera','Printer connection']){
    await trialPage.getByRole('button',{name:section,exact:true}).click();
@@ -184,7 +189,22 @@ async function main(){
   await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
   expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
-  await trialContext.close();console.log('PASS: explicit one-day trial, upgrade available during trial, watermark pixels in the decorated QR JPEG and native print raster changes after paid activation.');
+  await trialPage.getByRole('button',{name:'Connect & find printer queues'}).click();await trialPage.getByLabel('Raw printer queue').selectOption('Fixture thermal queue');
+  await trialPage.evaluate(()=>Object.defineProperty(navigator.mediaDevices,'getUserMedia',{configurable:true,value:async()=>{const c=document.createElement('canvas');c.width=1280;c.height=720;c.getContext('2d').fillRect(0,0,1280,720);const stream=c.captureStream(10);Object.defineProperty(stream.getVideoTracks()[0],'label',{value:'Fixture USB Camera'});return stream;}}));
+  await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();const trackedKiosk=trialPage.getByRole('dialog',{name:'PhotoTags LRB guest kiosk'});
+  await trackedKiosk.locator('.kiosk-start').click();await trackedKiosk.getByRole('button',{name:'1 shot',exact:true}).click();await trackedKiosk.getByRole('button',{name:'Continue to camera'}).click();await trackedKiosk.locator('.kiosk-camera-button').click();
+  await expect(trackedKiosk.getByRole('button',{name:'Take my photo',exact:true})).toBeEnabled();
+  await expect.poll(async()=>JSON.stringify((await pg.query('select camera,printer,app_mode from light_usage_devices')).rows),{timeout:25000}).toContain('Fixture USB Camera');
+  const tracked=(await pg.query("select * from light_usage_devices where camera->>'label'='Fixture USB Camera'")).rows[0];expect(tracked.printer.queue).toBe('Fixture thermal queue');expect(tracked.app_mode).toBe('kiosk');
+  const views=tracked.total_views;await trackedKiosk.getByRole('button',{name:'Close camera',exact:true}).click();
+  await expect.poll(async()=>(await pg.query('select camera from light_usage_devices where installation_id=$1',[tracked.installation_id])).rows[0].camera.active,{timeout:25000}).toBe(false);
+  const closed=(await pg.query('select total_views,camera from light_usage_devices where installation_id=$1',[tracked.installation_id])).rows[0];expect(closed.total_views).toBe(views);expect(closed.camera.label).toBe('Fixture USB Camera');
+  await adminPage.goto('http://localhost:4186/admin');await adminPage.getByRole('button',{name:'PhotoTags Light',exact:true}).click();await adminPage.getByRole('button',{name:'Usage',exact:true}).click();
+  await expect(adminPage.locator('.light-usage-table')).toContainText('Fixture USB Camera');await expect(adminPage.locator('.light-usage-table')).toContainText('Fixture thermal queue');
+  await adminPage.screenshot({path:path.join(booth,'artifacts/light-admin-usage-desktop.png'),fullPage:true});
+  await adminPage.getByLabel('Find an installation or device').fill('Fixture USB Camera');await adminPage.getByRole('button',{name:'Search usage',exact:true}).click();await expect(adminPage.locator('.light-usage-table tbody tr')).toHaveCount(1);
+  expect((await new AxeBuilder({page:adminPage}).include('.light-usage').withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
+  await trialContext.close();console.log('PASS: one-day trial, decorated QR watermark, native print raster, signed usage reports, camera and printer metadata, view deduplication and admin usage search.');
 
  }finally{await browser?.close();await vite?.close();await website?.close();await pg.close();delete process.env.VITE_LIGHT_LICENSING_ENABLED;delete process.env.VITE_LIGHT_API_ORIGIN;delete process.env.VITE_LIGHT_PUBLIC_KEY_JWK;}
 }

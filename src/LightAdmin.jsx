@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './light.css';
+import LightUsageAdmin from './LightUsageAdmin';
 import { lightEndpoint } from './lightEndpoint';
 const empty = { plans: [], licenses: [], installations: [], activations: [], payments: [], audit: [] };
 const when = date => date ? new Date(date).toLocaleString() : '—';
@@ -32,9 +33,10 @@ export default function LightAdmin({ password }) {
   const activeLicenses = data.licenses.filter(l => l.status === 'active' && (!l.expires_at || Date.parse(l.expires_at) > Date.now()));
   return <section className="light-admin">
     <header className="light-admin-heading"><div><p className="eyebrow">Separate product · Web booth</p><h2>PhotoTags Light</h2><p>Licenses, registered installations and payments for the Light booth.</p></div><button className="outline-button" disabled={busy} onClick={refresh}>Refresh Light</button></header>
-    <nav className="light-tabs" aria-label="PhotoTags Light sections">{['overview','licenses','installations','plans','payments'].map(t => <button key={t} aria-current={tab === t ? 'page' : undefined} onClick={() => setTab(t)}>{t[0].toUpperCase()+t.slice(1)}</button>)}</nav>
+    <nav className="light-tabs" aria-label="PhotoTags Light sections">{['overview','usage','licenses','installations','plans','payments'].map(t => <button key={t} aria-current={tab === t ? 'page' : undefined} onClick={() => setTab(t)}>{t[0].toUpperCase()+t.slice(1)}</button>)}</nav>
     <p className="light-admin-message" role="status">{busy ? 'Loading Light records...' : message}</p>
     <p className="light-admin-note">These records belong to PhotoTags Light. APK licenses, devices, pricing and payments are managed in their existing sections. Lists show up to 1,000 recent records per section.</p>
+    {tab === 'usage' && <LightUsageAdmin password={password} />}
     {tab === 'overview' && <><div className="light-summary">{[['Active Light licenses',activeLicenses.length],['Registered installations',data.installations.length],['Light payments',data.payments.filter(p=>p.status==='paid').length]].map(([label,value]) => <article key={label}><span>{label}</span><strong>{value}</strong></article>)}</div><h3>Recent Light activity</h3><div className="light-table-wrap"><table><thead><tr><th>Action</th><th>Subject</th><th>Time</th></tr></thead><tbody>{data.audit.slice(0,30).map(a=><tr key={a.id}><td>{a.action}</td><td>{a.subject}</td><td>{when(a.created_at)}</td></tr>)}</tbody></table></div></>}
     {['licenses','installations','payments'].includes(tab) && <label className="light-search">Search Light {tab}<input value={search} onChange={e=>setSearch(e.target.value)} /></label>}
     {tab === 'licenses' && <><form className="light-create" onSubmit={e=>{e.preventDefault();void action('create_license','',{planId,email});}}><h3>Issue a Light license</h3><label>Plan<select value={planId} onChange={e=>setPlanId(e.target.value)}>{data.plans.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Customer email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></label><button className="primary-button" disabled={busy || !data.plans.length}>Create Light license</button></form>
