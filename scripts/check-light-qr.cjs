@@ -52,6 +52,10 @@ async function main(){
      await context.close();console.log('PASS older service: setup error shown without creating a hosted fallback or redirect.');continue;
    }
    if(legacy){
+     await dialog.getByRole('button',{name:'Close license activation'}).click();
+     await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Resume license payment'}).click();
+     await expect(dialog.getByLabel('Receipt email')).toHaveValue('browser-fixture@example.test');
+     await expect(dialog.getByRole('button',{name:'Switch to in-app QR'})).toBeEnabled();
      await expect(dialog.getByRole('link',{name:'complete the earlier payment at PayMongo'})).toBeVisible();
      await dialog.getByRole('button',{name:'Switch to in-app QR'}).click();
    }
@@ -61,6 +65,16 @@ async function main(){
    const issues=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();expect(issues.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}))).toEqual([]);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
    await page.screenshot({path:path.join(booth,`artifacts/light-qr-${legacy?'legacy':mobile?'phone':'desktop'}.png`)});
+   if(!mobile && !legacy){
+     const previous=[...provider.intents.values()].at(-1);
+     await dialog.getByRole('button',{name:'Cancel & start over'}).click();
+     await expect(dialog.getByRole('heading',{name:'Before you activate'})).toBeVisible();
+     expect(previous.attributes.status).toBe('cancelled');
+     await expect(dialog.getByRole('button',{name:'Agree & continue'})).toBeDisabled();
+     await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Agree & continue'}).click();
+     await dialog.getByRole('radio').first().check();await dialog.getByRole('button',{name:'Show payment QR'}).click();
+     await expect(dialog.getByRole('img')).toBeVisible();
+   }
    const intent=[...provider.intents.values()].at(-1);const before=provider.intents.size+provider.checkouts.size;
    await dialog.getByRole('button',{name:'Close license activation'}).click();
    await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Resume license payment'}).click();

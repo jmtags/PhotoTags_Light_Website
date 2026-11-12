@@ -19,7 +19,7 @@ function imageUrl(value) {
 }
 function view(session, status = session.status) {
   return { paymentId: session.id, status, planId: session.plan_id, amount: session.amount, currency: session.currency,
-    reference: session.reference_number, qrImageUrl: session.qr_image_url || undefined, expiresAt: session.qr_expires_at || undefined };
+    receiptEmail:session.customer_email, reference: session.reference_number, qrImageUrl: session.qr_image_url || undefined, expiresAt: session.qr_expires_at || undefined };
 }
 function hostedView(session) {
   return {...view(session,'hosted_pending'),checkoutUrl:session.checkout_url};
@@ -127,4 +127,17 @@ async function recover(db,session,intentId,env,fetcher) {
   checked(await db.rpc('light_attach_qr_intent',{p_id:session.id,p_intent_id:intentId}));
   return reconcile(db,await saveCode(db,candidate,intent),env,fetcher,intent);
 }
-module.exports = {checkout,reconcile,recover,retrieve,view,hostedView,validateIntent,imageUrl};
+async function cancel(db,session,env,fetcher) {
+  if (session.status==='paid' || session.status==='failed') return session;
+  if (session.checkout_id) return replaceHosted(db,session,env,fetcher);
+  if (!session.payment_intent_id) throw new Error('light_checkout_pending_host_review');
+  let intent=await retrieve(session,env,fetcher);
+  let state=await reconcile(db,session,env,fetcher,intent);
+  if (state.status==='paid' || state.status==='failed') return state;
+  if (!['awaiting_payment_method','awaiting_next_action'].includes(intent.attributes.status)) return state;
+  try { await payments.provider(`/payment_intents/${intent.id}/cancel`,{method:'POST'},env,fetcher); }
+  catch { /* Re-read the canonical intent: a payment may have started during cancellation. */ }
+  intent=await retrieve(session,env,fetcher);
+  return reconcile(db,session,env,fetcher,intent);
+}
+module.exports = {checkout,reconcile,recover,retrieve,view,hostedView,validateIntent,imageUrl,cancel};

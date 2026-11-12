@@ -16,6 +16,8 @@ New purchases use the QR endpoint exclusively. If the service is outdated or the
 
 If the dialog shows an earlier hosted payment, enter the receipt email and select **Switch to in-app QR**. The service retrieves that checkout and verifies its Light ownership. A paid purchase is reconciled; a processing payment remains in progress. Only an unpaid checkout that PayMongo confirms expired can be marked failed locally and replaced by a native QR attempt. The original checkout record is retained for audit. The dialog replaces its old hosted state with the new QR, including after reload. Never clear app data to work around a hosted payment, because that discards the installation identity.
 
+An unfinished purchase resumes at step 3 because terms and plan selection were already recorded. The dialog restores the receipt email from the installation-owned payment response, explains the resumed state, and labels the optional manual refresh **Refresh status**. Payment confirmation continues automatically. **Cancel & start over** verifies and closes the unpaid checkout/intent on the server before returning to terms and plan selection; processing or paid attempts cannot be discarded. This recovery uses the existing Light schema and requires no extra migration or project.
+
 ## Payment lifecycle and recovery
 
 - The receipt email, accepted agreement version, amount, currency, duration and installation allowance are snapshotted server-side. Payment Intent descriptions explicitly identify `PhotoTags Light license`, plan and reference. This affects new purchases; historical PayMongo transaction descriptions are unchanged.

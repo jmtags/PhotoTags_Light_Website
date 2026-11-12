@@ -58,6 +58,27 @@ test('QR readiness checks detect a missing migration without creating a payment'
   const result=await request(missing);assert.equal(result.ok,true);assert.equal(result.paymentSetup.status,'light_inline_qr_not_configured');assert.equal(result.paymentSetup.inlineQr,false);
   assert.equal(provider.calls.length,0);
 });
+test('cancel and restart closes only the owned unpaid attempt and restores its receipt email',async()=>{
+  for(const hosted of [false,true]){
+    const provider=fixture(),c=client(provider),first=await c.call(hosted?'checkout':'qr-checkout',order);
+    const saved=await c.call('payment-status',{paymentId:first.paymentId});assert.equal(saved.receiptEmail,order.email);
+    const stranger=client(provider);assert.equal((await stranger.call('cancel-payment',{paymentId:first.paymentId})).status,'light_payment_not_found');
+    const cancelled=await c.call('cancel-payment',{paymentId:first.paymentId});assert.equal(cancelled.status,'cancelled',JSON.stringify(cancelled));
+    const record=(await pg.query('select * from light_payments where id=$1',[first.paymentId])).rows[0];assert.equal(record.status,'failed');
+    const next=await c.call('qr-checkout',order);assert.equal(next.ok,true);assert.notEqual(next.paymentId,first.paymentId);
+  }
+});
+test('cancel and restart preserves paid and processing attempts',async()=>{
+  for(const hosted of [false,true])for(const paid of [false,true]){
+    const provider=fixture(),c=client(provider),first=await c.call(hosted?'checkout':'qr-checkout',order);
+    const resource=[...(hosted?provider.checkouts:provider.intents).values()][0];
+    if(paid)provider.pay(resource.id);
+    else if(hosted)resource.attributes.payments=[{attributes:{status:'pending',amount:2000,currency:'PHP'}}];
+    else resource.attributes.status='processing';
+    const result=await c.call('cancel-payment',{paymentId:first.paymentId});assert.equal(result.status,paid?'licensed':'payment_processing',JSON.stringify(result));
+    assert.notEqual(resource.attributes.status,'cancelled');assert.notEqual(resource.attributes.status,'expired');
+  }
+});
 test('in-app QR reuses a pending intent, labels the payment, verifies paid status and fulfills exactly once',async()=>{
   const provider=fixture(),c=client(provider);
   const denied=await c.call('qr-checkout',{...order,acceptedAgreement:false});assert.equal(denied.ok,false);
