@@ -54,7 +54,7 @@ async function main(){
   await expect(page.getByRole('heading',{name:'PhotoTags Light license',exact:true})).toBeVisible();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('Activate a PhotoTags Light license');
   await page.getByLabel('Light license key',{exact:true}).fill(grant.data.licenseKey);await page.getByRole('button',{name:'Activate Light license',exact:true}).click();
-  await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
+  await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();
   await page.goto('http://localhost:4185/__light-photo-test');
   const raw=page.getByRole('group',{name:'Raw photo',exact:true}),decorated=page.getByRole('group',{name:'Decorated receipt',exact:true});
   await expect(raw.getByAltText('Scan to download raw photo')).toBeVisible();
@@ -78,10 +78,11 @@ async function main(){
   await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('installation blocked');
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toHaveCount(0);
-  await pg.exec('update light_installations set blocked=false');await page.getByText('Installation & offline access',{exact:true}).click();await page.getByRole('button',{name:'Check license / payment',exact:true}).click();
-  await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
+  const wall=page.getByRole('dialog',{name:'Activate to launch your booth'});
+  await expect(wall).toBeVisible();
+  await pg.exec('update light_installations set blocked=false');await wall.getByText('Installation & offline access',{exact:true}).click();await wall.getByRole('button',{name:'Check license / payment',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();
   await page.screenshot({path:path.join(booth,'artifacts/light-license-phone.png'),fullPage:true});
-  await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();
   // A transport outage keeps a cryptographically verified saved permit usable after reload.
   transportDown=true;await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('saved offline permit remains usable');
@@ -89,9 +90,10 @@ async function main(){
   // Expiry must close an already-open kiosk, not just disable a future launch.
   await page.clock.fastForward(8*86400000);
   await expect(page.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toHaveCount(0);
-  await expect(page.locator('.light-license-settings [role=status]')).toContainText('expired');
-  await expect(page.getByRole('button',{name:'License active',exact:true})).toBeDisabled();
-  await expect(page.getByRole('button',{name:'Activate Light license',exact:true})).toBeDisabled();
+  await expect(wall).toBeVisible();
+  await expect(wall.locator('.light-license-settings [role=status]')).toContainText('expired');
+  await expect(wall.getByRole('button',{name:'License active',exact:true})).toBeDisabled();
+  await expect(wall.getByRole('button',{name:'Activate Light license',exact:true})).toBeDisabled();
   // Verify the client rejects signature tampering and permits for another identity.
   const verified=await page.evaluate(async({pub})=>{
    const module=await import('/src/lightPermit.ts');const idb=await new Promise((resolve,reject)=>{const r=indexedDB.open('phototags-light-license',1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
@@ -126,7 +128,9 @@ async function main(){
   await adminPage.goto('http://localhost:4186/light');await expect(adminPage.getByRole('heading',{name:'Light license terms',exact:true})).toBeVisible();
   console.log('PASS: separate website Light admin navigation, installations, plans and public terms page.');
   const trialContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+  let trialTransportDown=false;
   await trialContext.route('**/api/light?*',async route=>{
+   if(trialTransportDown)return route.fulfill({status:503,json:{ok:false,status:'fixture_offline'}});
     const request=route.request();let status=200,headers={},body='';const response={setHeader(k,v){headers[k]=v;},end(v){body=v||'';}};Object.defineProperty(response,'statusCode',{get:()=>status,set:v=>status=v});
     await handler({method:request.method(),url:request.url(),body:request.postDataJSON(),headers:{...request.headers(),host:'localhost:4185','x-forwarded-for':crypto.randomUUID()}},response);await route.fulfill({status,headers,body});
   });
@@ -137,7 +141,33 @@ async function main(){
     expect(dark).toBeGreaterThan(0);trialUploads++;await route.fulfill({status:200,json:{ok:true}});
   });
   const trialPage=await trialContext.newPage();await trialPage.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
-  await trialPage.getByRole('button',{name:'Light license',exact:true}).click();await trialPage.getByRole('button',{name:'Start 1-day free trial',exact:true}).click();
+  const trialWall=trialPage.getByRole('dialog',{name:'Activate to launch your booth'});
+  for(const section of ['Branding','Camera','Printer connection']){
+   await trialPage.getByRole('button',{name:section,exact:true}).click();
+   await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(trialWall).toBeVisible();
+   if(section==='Branding'){
+    expect((await new AxeBuilder({page:trialPage}).withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
+    await trialPage.screenshot({path:path.join(booth,'artifacts/light-launch-wall-phone.png'),fullPage:true});
+    await trialWall.getByRole('button',{name:'Activate license',exact:true}).click();
+    const activation=trialPage.getByRole('dialog',{name:'Before you activate',exact:true});
+    await expect(activation).toBeVisible();await activation.getByRole('button',{name:'Close license activation'}).click();
+    await expect(trialWall).toBeVisible();
+   }
+   await expect(trialPage.getByRole('button',{name:section,exact:true})).toHaveAttribute('aria-current','page');
+   await trialWall.getByRole('button',{name:'Close license wall',exact:true}).click();await expect(trialWall).toHaveCount(0);
+   expect(await trialPage.evaluate(()=>document.body.style.overflow)).toBe('');
+   await expect(trialPage.getByRole('button',{name:'Launch kiosk',exact:true})).toBeFocused();
+  }
+  await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();
+  await trialWall.getByRole('button',{name:'Start 1-day free trial',exact:true}).click();
+  await expect(trialPage.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();await expect(trialWall).toHaveCount(0);
+  await trialPage.reload();await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();
+  await expect(trialPage.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();await expect(trialWall).toHaveCount(0);
+  trialTransportDown=true;await trialPage.reload();
+  await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();
+  await expect(trialPage.getByRole('dialog',{name:'PhotoTags guest kiosk'})).toBeVisible();await expect(trialWall).toHaveCount(0);
+  trialTransportDown=false;
+  await trialPage.reload();await trialPage.getByRole('button',{name:'Light license',exact:true}).click();
   await expect(trialPage.locator('.light-license-settings [role=status]')).toContainText('1-day free trial is active');
   await expect(trialPage.getByRole('button',{name:'Buy a Light license',exact:true})).toBeEnabled();
   await expect(trialPage.getByRole('button',{name:'Start 1-day free trial',exact:true})).toHaveCount(0);
