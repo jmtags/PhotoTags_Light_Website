@@ -57,21 +57,21 @@ async function main(){
   await expect(page.getByRole('dialog',{name:'PhotoTags LRB guest kiosk'})).toBeVisible();
   await page.goto('http://localhost:4185/__light-photo-test');
   const raw=page.getByRole('group',{name:'Raw photo',exact:true}),decorated=page.getByRole('group',{name:'Decorated receipt',exact:true});
-  await expect(raw.getByAltText('Scan to download raw photo')).toBeVisible();
-  await expect(decorated.getByRole('status')).toContainText('Upload failed');expect(uploadSlots).toBe(2);
-  await page.clock.fastForward(2000);expect(uploadSlots).toBe(2);
+  await expect(raw).toHaveCount(0);
+  await expect(decorated.getByRole('status')).toContainText('Upload failed');expect(uploadSlots).toBe(1);
+  await page.clock.fastForward(2000);expect(uploadSlots).toBe(1);
   await decorated.getByRole('button',{name:'Retry QR for decorated receipt'}).click();
-  await expect(page.getByAltText('Scan to download decorated receipt')).toBeVisible();expect(uploaded).toBe(2);expect(uploadSlots).toBe(3);
+  await expect(page.getByAltText('Scan to download decorated receipt')).toBeVisible();expect(uploaded).toBe(1);expect(uploadSlots).toBe(2);
   const AxeBuilder=req('@axe-core/playwright').default;expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
   await page.screenshot({path:path.join(booth,'artifacts/light-photo-download-phone.png'),fullPage:true});
   await page.getByRole('button',{name:'Toggle panel'}).click();await page.getByRole('button',{name:'Toggle panel'}).click();
-  await expect(raw.getByRole('img')).toBeVisible();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(3);
-  await page.getByRole('button',{name:'Change session'}).click();await expect(raw.getByRole('img')).toBeVisible();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(5);
+  await expect(raw).toHaveCount(0);await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(2);
+  await page.getByRole('button',{name:'Change session'}).click();await expect(raw).toHaveCount(0);await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(3);
   await page.getByRole('button',{name:'Toggle automation'}).click();await page.getByRole('button',{name:'Change session'}).click();
-  await expect(raw.getByRole('img')).toHaveCount(0);await expect(decorated.getByRole('img')).toHaveCount(0);expect(uploadSlots).toBe(5);
-  await decorated.getByRole('button',{name:'Get QR for decorated receipt'}).click();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(6);
-  await page.getByRole('button',{name:'Toggle connection'}).click();await expect(raw.getByRole('button',{name:'Get QR for raw photo'})).toBeDisabled();
-  console.log('PASS: automatic raw and decorated QRs, isolated failed upload and retry, cached remount without duplicate upload, new session reset, manual mode and offline gating.');
+  await expect(raw).toHaveCount(0);await expect(decorated.getByRole('img')).toHaveCount(0);expect(uploadSlots).toBe(3);
+  await decorated.getByRole('button',{name:'Get QR for decorated receipt'}).click();await expect(decorated.getByRole('img')).toBeVisible();expect(uploadSlots).toBe(4);
+  await page.getByRole('button',{name:'Toggle connection'}).click();await expect(raw).toHaveCount(0);await decorated.getByRole('img').waitFor();await page.getByRole('button',{name:'Change session'}).click();await expect(decorated.getByRole('button',{name:'Get QR for decorated receipt'})).toBeDisabled();
+  console.log('PASS: decorated-only QR with no raw-photo uploads, failed upload and retry, cached remount without duplicate upload, new session reset, manual mode and offline gating.');
   await page.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();await expect(page.getByRole('dialog',{name:'PhotoTags LRB guest kiosk'})).toBeVisible();
   transportDown=false;await pg.exec('update light_installations set blocked=true');
@@ -175,7 +175,7 @@ async function main(){
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();
   const trialJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const trialJob=fs.readFileSync(await (await trialJobEvent).path());
   await trialPage.goto('http://localhost:4185/__light-photo-test');
-  await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toBeVisible();expect(trialUploads).toBe(2);
+  await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toHaveCount(0);expect(trialUploads).toBe(1);
   await trialPage.screenshot({path:path.join(booth,'artifacts/light-trial-qr-phone.png'),fullPage:true});
   const upgrade=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly',email:'trial-upgrade@example.test'}})).data;
   await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Light license',exact:true}).click();
@@ -184,7 +184,7 @@ async function main(){
   await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
   expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
-  await trialContext.close();console.log('PASS: explicit one-day trial, upgrade available during trial, watermark pixels in both QR JPEGs and native print raster changes after paid activation.');
+  await trialContext.close();console.log('PASS: explicit one-day trial, upgrade available during trial, watermark pixels in the decorated QR JPEG and native print raster changes after paid activation.');
 
  }finally{await browser?.close();await vite?.close();await website?.close();await pg.close();delete process.env.VITE_LIGHT_LICENSING_ENABLED;delete process.env.VITE_LIGHT_API_ORIGIN;delete process.env.VITE_LIGHT_PUBLIC_KEY_JWK;}
 }
