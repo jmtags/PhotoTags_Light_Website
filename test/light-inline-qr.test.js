@@ -139,3 +139,37 @@ test('QR migration remains service-role only and is included in fresh setup',asy
   const sql=fs.readFileSync('supabase/migrations/202611120001_light_inline_qr.sql','utf8');assert.ok(fs.readFileSync('supabase/one_time_supabase_setup.sql','utf8').replace(/\r\n/g,'\n').includes(sql.replace(/\r\n/g,'\n')));
   assert.equal((await pg.query("select has_function_privilege('anon','light_fulfill_qr(uuid,text,integer,text,text)','execute') as ok")).rows[0].ok,false);
 });
+
+
+test('payment-status restores a generated QR after interrupted delivery without creating another intent',async()=>{
+  const provider=fixture(),c=client(provider),first=await c.call('qr-checkout',order);
+  await pg.query('update light_payments set qr_image_url=null,qr_expires_at=null where id=$1',[first.paymentId]);
+  const recovered=await c.call('payment-status',{paymentId:first.paymentId});
+  assert.equal(recovered.qrImageUrl,first.qrImageUrl);assert.equal(recovered.status,'pending');assert.equal(provider.intents.size,1);
+  assert.ok((await pg.query('select qr_image_url from light_payments where id=$1',[first.paymentId])).rows[0].qr_image_url);
+});
+
+test('unfinished QR setup is distinguished from processing and can be cancelled before retrying',async()=>{
+  const provider=fixture(),c=client(provider),first=await c.call('qr-checkout',order),intent=[...provider.intents.values()][0];
+  intent.attributes.status='awaiting_payment_method';delete intent.attributes.next_action;
+  const incomplete=await c.call('payment-status',{paymentId:first.paymentId});assert.equal(incomplete.status,'qr_setup_incomplete');assert.equal(incomplete.qrImageUrl,undefined);
+  assert.equal((await c.call('cancel-payment',{paymentId:first.paymentId})).status,'cancelled');
+  const next=await c.call('qr-checkout',order);assert.ok(next.qrImageUrl);assert.notEqual(next.paymentId,first.paymentId);
+  const current=[...provider.intents.values()].at(-1);current.attributes.status='processing';
+  assert.equal((await c.call('payment-status',{paymentId:next.paymentId})).status,'processing');
+});
+
+test('QR image formats accept provider SVG and PNG while rejecting unsafe URLs and invalid base64',()=>{
+  const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>').toString('base64');
+  assert.equal(qr.imageUrl(svg),'data:image/svg+xml;base64,'+svg);
+  assert.equal(qr.imageUrl('data:image/svg+xml;base64,'+svg),'data:image/svg+xml;base64,'+svg);
+  assert.equal(qr.imageUrl('https://images.example.test/code.png'),'https://images.example.test/code.png');
+  for(const invalid of ['javascript:alert(1)','http://example.test/qr','https://user:pass@example.test/qr','garbage','data:text/html;base64,PHN2Zz4='])assert.throws(()=>qr.imageUrl(invalid),/light_qr_unavailable/);
+});
+
+test('unpaid attempts remain cancellable even if the provider QR image cannot be displayed',async()=>{
+  const provider=fixture(),c=client(provider),first=await c.call('qr-checkout',order),intent=[...provider.intents.values()][0];
+  intent.attributes.next_action.code.image_url='invalid';
+  assert.equal((await c.call('payment-status',{paymentId:first.paymentId})).status,'light_qr_unavailable');
+  assert.equal((await c.call('cancel-payment',{paymentId:first.paymentId})).status,'cancelled');
+});

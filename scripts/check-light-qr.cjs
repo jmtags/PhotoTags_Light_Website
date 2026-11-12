@@ -14,11 +14,22 @@ async function main(){
   for(const file of ['202611110001_light_licensing.sql','202611120001_light_inline_qr.sql'])await pg.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
   await pg.exec("update light_plans set active=true,amount=2000 where id='weekly'");
   const db=database(pg),provider=fixture(),env={LIGHT_SIGNING_PRIVATE_KEY:signing.privateKey.export({type:'pkcs8',format:'pem'}),LIGHT_PAYMONGO_SECRET_KEY:'sk_test_fixture',LIGHT_ALLOWED_ORIGINS:'http://localhost:4187'};
-  const handler=createLightHandler({env,client:()=>db,fetcher:provider.fetcher});
+  let interruptNext=false;
+  const fetcher=async(url,options)=>{
+    const result=await provider.fetcher(url,options);
+    if(interruptNext && new URL(url).pathname.endsWith('/attach')){
+      interruptNext=false;const intent=[...provider.intents.values()].at(-1);
+      intent.attributes.status='awaiting_payment_method';delete intent.attributes.next_action;
+      return {ok:true,json:async()=>({data:structuredClone(intent)})};
+    }
+    return result;
+  };
+  const handler=createLightHandler({env,client:()=>db,fetcher});
   process.env.VITE_LIGHT_LICENSING_ENABLED='true';process.env.VITE_LIGHT_API_ORIGIN='http://localhost:4187';process.env.VITE_LIGHT_PUBLIC_KEY_JWK=JSON.stringify(signing.publicKey.export({format:'jwk'}));
   server=await createServer({root:booth,configFile:path.join(booth,'vite.config.ts'),server:{port:4187,strictPort:true}});await server.listen();
   browser=await chromium.launch({channel:'chrome',headless:true});
-  for(const {mobile,legacy,oldService} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true},{mobile:false,legacy:false,oldService:true}]){
+  for(const {mobile,legacy,oldService,incomplete} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true},{mobile:false,legacy:false,oldService:true},{mobile:false,legacy:false,incomplete:true}]){
+   interruptNext=!!incomplete;
    let hostedSeeded=false;
    const context=await browser.newContext({viewport:mobile?{width:390,height:667}:{width:1440,height:1000},isMobile:mobile,hasTouch:mobile});
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.clock.install();
@@ -51,10 +62,14 @@ async function main(){
      expect(provider.checkouts.size).toBe(1); // Only the deliberately seeded historical purchase exists.
      await context.close();console.log('PASS older service: setup error shown without creating a hosted fallback or redirect.');continue;
    }
+   if(incomplete){
+     await expect(dialog.getByRole('heading',{name:'Choose your license'})).toBeVisible();
+     await expect(dialog.getByRole('status')).toContainText('QR setup did not finish');
+     const unfinished=[...provider.intents.values()].at(-1);
+     await dialog.getByRole('button',{name:'Show payment QR'}).click();
+     await expect(dialog.getByRole('img')).toBeVisible();expect(unfinished.attributes.status).toBe('cancelled');
+   }
    if(legacy){
-     await dialog.getByRole('button',{name:'Close license activation'}).click();
-     await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Resume license payment'}).click();
-     await expect(dialog.getByLabel('Receipt email')).toHaveValue('browser-fixture@example.test');
      await expect(dialog.getByRole('button',{name:'Switch to in-app QR'})).toBeEnabled();
      await expect(dialog.getByRole('link',{name:'complete the earlier payment at PayMongo'})).toBeVisible();
      await dialog.getByRole('button',{name:'Switch to in-app QR'}).click();
@@ -76,18 +91,26 @@ async function main(){
      await dialog.getByRole('radio').first().check();await dialog.getByRole('button',{name:'Show payment QR'}).click();
      await expect(dialog.getByRole('img')).toBeVisible();
    }
-   const intent=[...provider.intents.values()].at(-1);const before=provider.intents.size+provider.checkouts.size;
+   const previous=[...provider.intents.values()].at(-1);const before=provider.intents.size+provider.checkouts.size;
    await dialog.getByRole('button',{name:'Close license activation'}).click();
-   await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Resume license payment'}).click();
-   await expect(dialog.getByRole('img')).toBeVisible();
+   await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Activate license',exact:true}).click();
+   await expect(dialog.getByRole('heading',{name:'Before you activate'})).toBeVisible();
+   await expect(dialog.getByRole('checkbox')).not.toBeChecked();
    expect(provider.intents.size+provider.checkouts.size).toBe(before);
+   await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Agree & continue'}).click();
+   await expect(dialog.getByLabel('Receipt email')).toHaveValue('browser-fixture@example.test');
+   await dialog.getByRole('radio').first().check();await dialog.getByRole('button',{name:'Show payment QR'}).click();
+   await expect(dialog.getByRole('img')).toBeVisible();
+   expect(previous.attributes.status).toBe('cancelled');
+   expect(provider.intents.size+provider.checkouts.size).toBe(before+1);
+   const intent=[...provider.intents.values()].at(-1);
    provider.pay(intent.id);await page.clock.fastForward(6500);
    await expect(dialog.getByRole('heading',{name:'Your booth is licensed'})).toBeVisible();
    await expect(dialog.getByText('Light Weekly',{exact:true})).toBeVisible();await dialog.getByRole('button',{name:'Done',exact:true}).click();
    await expect(page.locator('.light-license-facts')).toContainText('Light Weekly');
    await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
    expect(errors).toEqual([]);await context.close();
-   console.log(`PASS ${legacy?'hosted-to-inline QR recovery':mobile?'phone':'desktop'}: consent and plan gates, inline QR, no redirect, reload/resume without duplicate intent, automatic verified activation, updated plan, accessibility.`);
+   console.log(`PASS ${legacy?'hosted-to-inline QR recovery':mobile?'phone':'desktop'}: consent and plan gates, inline QR, no redirect, close/reopen at terms, unpaid attempt cancelled before replacement, automatic verified activation, updated plan, accessibility.`);
   }
  } finally {await browser?.close();await server?.close();await pg.close();for(const key of ['VITE_LIGHT_LICENSING_ENABLED','VITE_LIGHT_API_ORIGIN','VITE_LIGHT_PUBLIC_KEY_JWK'])delete process.env[key];}
 }

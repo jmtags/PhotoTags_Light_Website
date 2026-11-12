@@ -16,13 +16,14 @@ module.exports = function fixture() {
         value.attributes.status='expired';
       }
     } else if (path === '/v1/payment_intents' && options.method === 'POST') {
-      value = {id:`pi_fixture_${++sequence}_${crypto.randomUUID().replaceAll('-','')}`,attributes:{...input,status:'awaiting_payment_method',payments:[]}};
+      value = {id:`pi_fixture_${++sequence}_${crypto.randomUUID().replaceAll('-','')}`,attributes:{...input,status:'awaiting_payment_method',client_key:'fixture_client_key',payments:[]}};
       intents.set(value.id,value);
     } else if (path === '/v1/payment_methods') {
       assert.equal(input.type,'qrph'); value = {id:'pm_fixture'};
     } else {
       const id = path.split('/')[3]; value = intents.get(id); assert.ok(value,`Unknown fixture intent ${id}`);
       if (path.endsWith('/attach')) {
+        assert.equal(input.client_key,value.attributes.client_key);
         value.attributes.status = 'awaiting_next_action';
         value.attributes.next_action = {code:{image_url:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/e0AAAAASUVORK5CYII='}};
       }

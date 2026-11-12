@@ -13,8 +13,17 @@ function validateIntent(intent, session) {
 }
 function imageUrl(value) {
   if (typeof value !== 'string' || value.length > 1000000) throw new Error('light_qr_unavailable');
-  if (/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=\r\n]+$/.test(value)) return value;
-  if (/^[A-Za-z0-9+/=\r\n]+$/.test(value)) return `data:image/png;base64,${value}`;
+  if (/^data:image\/(png|jpeg|svg\+xml|webp);base64,[A-Za-z0-9+/=\r\n]+$/i.test(value)) return value;
+  if (value.startsWith('https://')) {
+    const url=new URL(value);
+    if (!url.username && !url.password) return url.href;
+  }
+  if (/^[A-Za-z0-9+/=\r\n]+$/.test(value)) {
+    const decoded=Buffer.from(value,'base64');
+    const type=decoded.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'png' :
+      decoded[0]===255 && decoded[1]===216 ? 'jpeg' : /^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(decoded.toString('utf8').trimStart()) ? 'svg+xml' : null;
+    if (type) return `data:image/${type};base64,${value}`;
+  }
   throw new Error('light_qr_unavailable');
 }
 function view(session, status = session.status) {
@@ -67,6 +76,9 @@ async function reconcile(db, session, env, fetcher, known) {
     checked(await db.from('light_payments').update({status:'failed'}).eq('id',session.id).eq('status','pending'));
     return {...session,status:'failed'};
   }
+  if (a.status==='awaiting_next_action') return saveCode(db,session,intent);
+  if (a.status==='awaiting_payment_method') return {...session,status:'qr_setup_incomplete',qr_image_url:null};
+  if (a.status==='processing') return {...session,status:'processing'};
   return session;
 }
 async function saveCode(db, session, intent) {
@@ -101,7 +113,7 @@ async function checkout(db, installationId, data, env, fetcher) {
       intent = await payments.provider(`/payment_intents/${intent.id}/cancel`,{method:'POST'},env,fetcher);
       state = await reconcile(db,session,env,fetcher,intent);
     }
-    if (state.status !== 'failed') return view(await saveCode(db,session,intent));
+    if (state.status !== 'failed') return view(state);
     reserved = checked(await db.rpc('light_reserve_qr',{p_installation_id:installationId,p_plan_id:data.planId,p_email:data.email}));
     session = reserved.session;
     if (!reserved.owner) throw new Error('light_checkout_pending_host_review');
@@ -117,8 +129,8 @@ async function checkout(db, installationId, data, env, fetcher) {
   checked(await db.rpc('light_attach_qr_intent',{p_id:session.id,p_intent_id:intent.id}));
   const method = await payments.provider('/payment_methods',{method:'POST',body:{data:{attributes:{type:'qrph',expiry_seconds:1800,billing:{email:session.customer_email}}}}},env,fetcher);
   if (!/^pm_[A-Za-z0-9_]+$/.test(method?.id || '')) throw new Error('light_qr_unavailable');
-  const attached = await payments.provider(`/payment_intents/${intent.id}/attach`,{method:'POST',body:{data:{attributes:{payment_method:method.id}}}},env,fetcher);
-  return view(await saveCode(db,session,attached));
+  const attached = await payments.provider(`/payment_intents/${intent.id}/attach`,{method:'POST',body:{data:{attributes:{payment_method:method.id,...(intent.attributes.client_key ? {client_key:intent.attributes.client_key} : {})}}}},env,fetcher);
+  return view(await reconcile(db,session,env,fetcher,attached));
 }
 async function recover(db,session,intentId,env,fetcher) {
   const candidate = {...session,payment_intent_id:intentId};
@@ -132,9 +144,8 @@ async function cancel(db,session,env,fetcher) {
   if (session.checkout_id) return replaceHosted(db,session,env,fetcher);
   if (!session.payment_intent_id) throw new Error('light_checkout_pending_host_review');
   let intent=await retrieve(session,env,fetcher);
-  let state=await reconcile(db,session,env,fetcher,intent);
-  if (state.status==='paid' || state.status==='failed') return state;
-  if (!['awaiting_payment_method','awaiting_next_action'].includes(intent.attributes.status)) return state;
+  // Cancellation must also work when QR delivery failed or returned an unsupported image.
+  if (!['awaiting_payment_method','awaiting_next_action'].includes(intent.attributes.status)) return reconcile(db,session,env,fetcher,intent);
   try { await payments.provider(`/payment_intents/${intent.id}/cancel`,{method:'POST'},env,fetcher); }
   catch { /* Re-read the canonical intent: a payment may have started during cancellation. */ }
   intent=await retrieve(session,env,fetcher);

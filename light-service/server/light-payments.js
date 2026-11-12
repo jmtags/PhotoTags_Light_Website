@@ -11,7 +11,13 @@ async function provider(path, options = {}, env = process.env, fetcher = fetch) 
     signal: AbortSignal.timeout(15000)
   });
   const result = await response.json();
-  if (!response.ok) throw new Error('light_payment_provider_unavailable');
+  if (!response.ok) {
+    const issue=result.errors?.[0];
+    console.warn('[Light PayMongo request failed]',JSON.stringify({path,status:response.status,
+      code:typeof issue?.code==='string' ? issue.code.slice(0,80) : 'unknown',
+      field:typeof issue?.source?.pointer==='string' ? issue.source.pointer.slice(0,160) : undefined}));
+    throw new Error('light_payment_provider_unavailable');
+  }
   return result.data;
 }
 function validatePaidCheckout(checkout, session) {
