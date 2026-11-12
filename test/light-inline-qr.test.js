@@ -27,6 +27,37 @@ function client(provider){
   }};
 }
 const order={planId:'weekly',email:'fixture@example.test',acceptedAgreement:true};
+test('an earlier hosted attempt switches to in-app QR only after confirmed provider expiry',async()=>{
+  const provider=fixture(),c=client(provider);
+  const hosted=await c.call('checkout',order);assert.equal(hosted.ok,true,JSON.stringify(hosted));
+  const held=await c.call('qr-checkout',order);assert.equal(held.status,'hosted_pending');assert.equal(provider.intents.size,0);
+  const inline=await c.call('qr-checkout',{...order,replaceHosted:true});assert.equal(inline.code,200,JSON.stringify(inline));assert.match(inline.qrImageUrl,/^data:image/);
+  assert.notEqual(inline.paymentId,hosted.paymentId);assert.equal(provider.checkouts.values().next().value.attributes.status,'expired');
+  assert.equal((await pg.query('select status from light_payments where id=$1',[hosted.paymentId])).rows[0].status,'failed');
+  const resumed=await c.call('qr-checkout',order);assert.equal(resumed.paymentId,inline.paymentId);assert.equal(provider.intents.size,1);
+});
+test('switching preserves a paid or processing hosted payment and never creates another payable intent',async()=>{
+  for(const status of ['pending','paid']){
+    const provider=fixture(),c=client(provider),hosted=await c.call('checkout',order),checkout=[...provider.checkouts.values()][0];
+    if(status==='paid')provider.pay(checkout.id);
+    else checkout.attributes.payments=[{attributes:{status:'pending',amount:2000,currency:'PHP'}}];
+    const result=await c.call('qr-checkout',{...order,replaceHosted:true});
+    assert.equal(result.status,status==='paid'?'paid':'hosted_processing',JSON.stringify(result));
+    assert.equal(provider.intents.size,0);assert.equal(checkout.attributes.status,'active');
+  }
+});
+test('QR readiness checks detect a missing migration without creating a payment',async()=>{
+  const provider=fixture();
+  async function request(client){
+    const handler=createLightHandler({env,client:()=>client,fetcher:provider.fetcher});
+    const response={setHeader(){},end(raw){this.body=JSON.parse(raw);}};
+    await handler({url:'/api/light?route=plans',method:'GET',headers:{host:'light.test'}},response);return response.body;
+  }
+  assert.equal((await request(db)).paymentSetup.inlineQr,true);
+  const missing={from(table){if(table==='light_payments')return {select(){return this;},limit(){return Promise.resolve({error:{code:'42703'}});}};return db.from(table);}};
+  const result=await request(missing);assert.equal(result.ok,true);assert.equal(result.paymentSetup.status,'light_inline_qr_not_configured');assert.equal(result.paymentSetup.inlineQr,false);
+  assert.equal(provider.calls.length,0);
+});
 test('in-app QR reuses a pending intent, labels the payment, verifies paid status and fulfills exactly once',async()=>{
   const provider=fixture(),c=client(provider);
   const denied=await c.call('qr-checkout',{...order,acceptedAgreement:false});assert.equal(denied.ok,false);
@@ -38,7 +69,7 @@ test('in-app QR reuses a pending intent, labels the payment, verifies paid statu
   provider.pay(intent.id);
   const paid=await c.call('payment-status',{paymentId:first.paymentId});assert.equal(paid.status,'licensed',JSON.stringify(paid));assert.equal(keys.verify(paid.permit,env).plan,'weekly');
   await c.call('payment-status',{paymentId:first.paymentId});
-  assert.equal((await pg.query('select count(*)::int as n from light_licenses where customer_email=$1',[order.email])).rows[0].n,1);
+  assert.equal((await pg.query('select count(*)::int as n from light_licenses l join light_activations a on a.license_id=l.id where a.installation_id=$1',[c.id])).rows[0].n,1);
   assert.deepEqual((await pg.query('select * from licenses')).rows,[{id:'apk-untouched'}]);
 });
 test('QR payment verification rejects mismatched amount, product, installation, reference and intent',async()=>{

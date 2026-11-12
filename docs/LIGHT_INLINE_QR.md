@@ -12,7 +12,9 @@ The QR implementation is part of the existing `PhotoTags_Light_Website` reposito
 4. Deploy the booth update. Its activation button opens Terms > Plan > Payment QR. It uses native QR Ph Payment Intents; no iframe, external checkout redirect or browser payment-success flag grants access.
 5. Test a purchase from the original installed booth. Confirm the dialog updates automatically, the correct plan appears, the admin payment is paid and the installation is linked. Test a real iPhone/iPad separately before event use. Local fixture tests do not prove live merchant QR permissions or bank-app behavior.
 
-During rollout, the updated booth recognizes an older service or a missing QR migration and offers a hosted payment link inside the dialog. It does not automatically redirect. This compatibility fallback is used only for known setup failures; uncertain provider creation is never retried as a new hosted purchase. Finish the service rollout to display the in-app QR for new purchases.
+New purchases use the QR endpoint exclusively. If the service is outdated or the migration is missing, the dialog shows a setup error rather than silently creating a hosted purchase. The public plans response includes a read-only `paymentSetup` result (`inlineQr`, `status`, `version`) to distinguish deployment and migration issues without creating a payment.
+
+If the dialog shows an earlier hosted payment, enter the receipt email and select **Switch to in-app QR**. The service retrieves that checkout and verifies its Light ownership. A paid purchase is reconciled; a processing payment remains in progress. Only an unpaid checkout that PayMongo confirms expired can be marked failed locally and replaced by a native QR attempt. The original checkout record is retained for audit. The dialog replaces its old hosted state with the new QR, including after reload. Never clear app data to work around a hosted payment, because that discards the installation identity.
 
 ## Payment lifecycle and recovery
 

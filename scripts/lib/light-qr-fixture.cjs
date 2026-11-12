@@ -8,8 +8,13 @@ module.exports = function fixture() {
     const input = options.body ? JSON.parse(options.body).data.attributes : {};
     let value;
     if (path === '/v2/checkout_sessions' && options.method === 'POST') {
-      const id='cs_fixture_'+crypto.randomUUID().replaceAll('-',''); value={id,attributes:{...input,checkout_url:`https://checkout.paymongo.com/${id}`,payments:[]}};checkouts.set(id,value);
-    } else if (path.startsWith('/v1/checkout_sessions/')) { value=checkouts.get(path.split('/')[3]);assert.ok(value);
+      const id='cs_fixture_'+crypto.randomUUID().replaceAll('-',''); value={id,attributes:{...input,checkout_url:`https://checkout.paymongo.com/${id}`,status:'active',payments:[]}};checkouts.set(id,value);
+    } else if (path.startsWith('/v1/checkout_sessions/')) {
+      value=checkouts.get(path.split('/')[3]);assert.ok(value);
+      if(path.endsWith('/expire')) {
+        if(value.attributes.payments.some(p=>['paid','pending','processing'].includes(p.attributes.status)))return {ok:false,json:async()=>({errors:[{code:'checkout_session_not_expirable'}]})};
+        value.attributes.status='expired';
+      }
     } else if (path === '/v1/payment_intents' && options.method === 'POST') {
       value = {id:`pi_fixture_${++sequence}_${crypto.randomUUID().replaceAll('-','')}`,attributes:{...input,status:'awaiting_payment_method',payments:[]}};
       intents.set(value.id,value);
@@ -25,5 +30,5 @@ module.exports = function fixture() {
     }
     return {ok:true,json:async()=>({data:structuredClone(value)})};
   };
-  return {fetcher,intents,checkouts,calls,pay(id){const intent=intents.get(id)||checkouts.get(id),a=intent.attributes;a.status='succeeded';a.payments=[{id:'pay_fixture',attributes:{status:'paid',amount:a.amount||a.line_items[0].amount,currency:a.currency||'PHP',payment_intent_id:id,source:{type:'qrph'}}}];}};
+  return {fetcher,intents,checkouts,calls,pay(id){const intent=intents.get(id)||checkouts.get(id),a=intent.attributes;if(intents.has(id))a.status='succeeded';a.payments=[{id:'pay_fixture',attributes:{status:'paid',amount:a.amount||a.line_items[0].amount,currency:a.currency||'PHP',payment_intent_id:id,source:{type:'qrph'}}}];}};
 };

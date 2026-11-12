@@ -18,12 +18,21 @@ async function main(){
   process.env.VITE_LIGHT_LICENSING_ENABLED='true';process.env.VITE_LIGHT_API_ORIGIN='http://localhost:4187';process.env.VITE_LIGHT_PUBLIC_KEY_JWK=JSON.stringify(signing.publicKey.export({format:'jwk'}));
   server=await createServer({root:booth,configFile:path.join(booth,'vite.config.ts'),server:{port:4187,strictPort:true}});await server.listen();
   browser=await chromium.launch({channel:'chrome',headless:true});
-  for(const {mobile,legacy} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true}]){
+  for(const {mobile,legacy,oldService} of [{mobile:false,legacy:false},{mobile:true,legacy:false},{mobile:false,legacy:true},{mobile:false,legacy:false,oldService:true}]){
+   let hostedSeeded=false;
    const context=await browser.newContext({viewport:mobile?{width:390,height:667}:{width:1440,height:1000},isMobile:mobile,hasTouch:mobile});
    const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.clock.install();
    await context.route('**/api/light?*',async route=>{
     const request=route.request();
-    if(legacy && request.postDataJSON()?.action==='qr-checkout')return route.fulfill({status:400,json:{ok:false,status:'invalid_challenge_request'}});
+    if(oldService && request.postDataJSON()?.action==='qr-checkout')return route.fulfill({status:400,json:{ok:false,status:'invalid_challenge_request'}});
+    const payload=request.postDataJSON();
+    if(legacy && !hostedSeeded && request.url().includes('route=qr-checkout')) {
+      hostedSeeded=true;
+      const reserved=await db.rpc('light_reserve_checkout',{p_installation_id:payload.installationId,p_plan_id:'weekly',p_email:'browser-fixture@example.test'});
+      if(reserved.error)throw reserved.error;const session=reserved.data.session;
+      const cs=await (await provider.fetcher('https://api.paymongo.com/v2/checkout_sessions',{method:'POST',body:JSON.stringify({data:{attributes:{reference_number:session.reference_number,line_items:[{amount:session.amount,currency:'PHP',quantity:1}],metadata:{product:'phototags_light',light_payment_id:session.id,installation_id:payload.installationId}}}})})).json();
+      const attached=await db.from('light_payments').update({checkout_id:cs.data.id,checkout_url:cs.data.attributes.checkout_url}).eq('id',session.id);if(attached.error)throw attached.error;
+    }
     let status=200,headers={},body='';const response={setHeader(k,v){headers[k]=v;},end(v){body=v||'';}};Object.defineProperty(response,'statusCode',{get:()=>status,set:v=>status=v});
     await handler({method:request.method(),url:request.url(),body:request.postDataJSON(),headers:{...request.headers(),host:'localhost:4187','x-forwarded-for':crypto.randomUUID()}},response);await route.fulfill({status,headers,body});
    });
@@ -37,17 +46,25 @@ async function main(){
    await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeDisabled();
    await dialog.getByRole('radio').first().check();await dialog.getByLabel('Receipt email').fill('browser-fixture@example.test');
    await dialog.getByRole('button',{name:'Show payment QR'}).click();
-   if(legacy)await expect(dialog.getByRole('link',{name:'Complete payment at PayMongo'})).toBeVisible();
-   else await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags Light license payment'})).toBeVisible();
+   if(oldService){
+     await expect(dialog.getByRole('status')).toContainText('latest Light service deployment');
+     expect(provider.checkouts.size).toBe(1); // Only the deliberately seeded historical purchase exists.
+     await context.close();console.log('PASS older service: setup error shown without creating a hosted fallback or redirect.');continue;
+   }
+   if(legacy){
+     await expect(dialog.getByRole('link',{name:'complete the earlier payment at PayMongo'})).toBeVisible();
+     await dialog.getByRole('button',{name:'Switch to in-app QR'}).click();
+   }
+   await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags Light license payment'})).toBeVisible();
+   if(legacy)expect([...provider.checkouts.values()].at(-1).attributes.status).toBe('expired');
    expect(page.url()).toBe('http://localhost:4187/');
    const issues=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();expect(issues.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}))).toEqual([]);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
    await page.screenshot({path:path.join(booth,`artifacts/light-qr-${legacy?'legacy':mobile?'phone':'desktop'}.png`)});
-   const intent=[...(legacy?provider.checkouts:provider.intents).values()].at(-1);const before=provider.intents.size+provider.checkouts.size;
+   const intent=[...provider.intents.values()].at(-1);const before=provider.intents.size+provider.checkouts.size;
    await dialog.getByRole('button',{name:'Close license activation'}).click();
    await page.reload();await page.getByRole('button',{name:'Light license',exact:true}).click();await page.getByRole('button',{name:'Resume license payment'}).click();
-   if(legacy)await expect(dialog.getByRole('link',{name:'Complete payment at PayMongo'})).toBeVisible();
-   else await expect(dialog.getByRole('img')).toBeVisible();
+   await expect(dialog.getByRole('img')).toBeVisible();
    expect(provider.intents.size+provider.checkouts.size).toBe(before);
    provider.pay(intent.id);await page.clock.fastForward(6500);
    await expect(dialog.getByRole('heading',{name:'Your booth is licensed'})).toBeVisible();
@@ -55,7 +72,7 @@ async function main(){
    await expect(page.locator('.light-license-facts')).toContainText('Light Weekly');
    await expect(page.locator('.light-license-settings [role=status]')).toContainText('License active');
    expect(errors).toEqual([]);await context.close();
-   console.log(`PASS ${legacy?'previous-service compatibility':mobile?'phone':'desktop'}: consent and plan gates, inline QR, no redirect, reload/resume without duplicate intent, automatic verified activation, updated plan, accessibility.`);
+   console.log(`PASS ${legacy?'hosted-to-inline QR recovery':mobile?'phone':'desktop'}: consent and plan gates, inline QR, no redirect, reload/resume without duplicate intent, automatic verified activation, updated plan, accessibility.`);
   }
  } finally {await browser?.close();await server?.close();await pg.close();for(const key of ['VITE_LIGHT_LICENSING_ENABLED','VITE_LIGHT_API_ORIGIN','VITE_LIGHT_PUBLIC_KEY_JWK'])delete process.env[key];}
 }

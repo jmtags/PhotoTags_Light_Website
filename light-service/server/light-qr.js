@@ -21,6 +21,31 @@ function view(session, status = session.status) {
   return { paymentId: session.id, status, planId: session.plan_id, amount: session.amount, currency: session.currency,
     reference: session.reference_number, qrImageUrl: session.qr_image_url || undefined, expiresAt: session.qr_expires_at || undefined };
 }
+function hostedView(session) {
+  return {...view(session,'hosted_pending'),checkoutUrl:session.checkout_url};
+}
+function validateHosted(checkout, session) {
+  const a=checkout?.attributes || {},m=a.metadata || {};
+  if (checkout?.id!==session.checkout_id || m.product!==PRODUCT || m.light_payment_id!==session.id ||
+    m.installation_id!==session.installation_id || a.reference_number!==session.reference_number) throw new Error('light_payment_mismatch');
+  return a;
+}
+async function replaceHosted(db, session, env, fetcher) {
+  const path=`/checkout_sessions/${encodeURIComponent(session.checkout_id)}`;
+  let checkout=await payments.provider(path,{},env,fetcher),a=validateHosted(checkout,session);
+  if (payments.validatePaidCheckout(checkout,session)) return payments.reconcile(db,session,env,fetcher);
+  if ((a.payments || []).some(p=>['pending','processing'].includes(p.attributes?.status)) || a.payment_intent?.attributes?.status==='processing') return session;
+  if (a.status!=='expired') {
+    try { await payments.provider(`${path}/expire`,{method:'POST'},env,fetcher); }
+    catch { /* An uncertain response or a racing payment must be resolved by canonical retrieval. */ }
+    checkout=await payments.provider(path,{},env,fetcher);a=validateHosted(checkout,session);
+    if (payments.validatePaidCheckout(checkout,session)) return payments.reconcile(db,session,env,fetcher);
+  }
+  if (a.status!=='expired' || (a.payments || []).some(p=>['pending','processing'].includes(p.attributes?.status)) || a.payment_intent?.attributes?.status==='processing') return session;
+  // Keep the old checkout for audit/reconciliation. Its provider-confirmed expiry makes a replacement safe.
+  checked(await db.from('light_payments').update({status:'failed'}).eq('id',session.id).eq('status','pending').eq('checkout_id',session.checkout_id));
+  return {...session,status:'failed'};
+}
 async function retrieve(session, env, fetcher) {
   const intent = await payments.provider(`/payment_intents/${encodeURIComponent(session.payment_intent_id)}`, {}, env, fetcher);
   validateIntent(intent, session); return intent;
@@ -56,7 +81,15 @@ async function saveCode(db, session, intent) {
 async function checkout(db, installationId, data, env, fetcher) {
   let reserved = checked(await db.rpc('light_reserve_qr',{p_installation_id:installationId,p_plan_id:data.planId,p_email:data.email}));
   let session = reserved.session;
-  if (session.checkout_id) return {paymentId:session.id,status:'hosted_pending',checkoutUrl:session.checkout_url};
+  if (session.checkout_id) {
+    if (data.replaceHosted!==true) return hostedView(session);
+    const previous=await replaceHosted(db,session,env,fetcher);
+    if (previous.status==='paid') return view(previous);
+    if (previous.status!=='failed') return {...hostedView(session),status:'hosted_processing'};
+    reserved=checked(await db.rpc('light_reserve_qr',{p_installation_id:installationId,p_plan_id:data.planId,p_email:data.email}));
+    session=reserved.session;
+    if (session.checkout_id) return hostedView(session);
+  }
   if (!reserved.owner) {
     if (!session.payment_intent_id) throw new Error('light_checkout_pending_host_review');
     let intent = await retrieve(session,env,fetcher);
@@ -94,4 +127,4 @@ async function recover(db,session,intentId,env,fetcher) {
   checked(await db.rpc('light_attach_qr_intent',{p_id:session.id,p_intent_id:intentId}));
   return reconcile(db,await saveCode(db,candidate,intent),env,fetcher,intent);
 }
-module.exports = {checkout,reconcile,recover,retrieve,view,validateIntent,imageUrl};
+module.exports = {checkout,reconcile,recover,retrieve,view,hostedView,validateIntent,imageUrl};

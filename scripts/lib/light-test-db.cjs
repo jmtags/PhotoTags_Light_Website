@@ -13,7 +13,10 @@ class Query {
     let query,values=[...this.values];const where=this.filters.join(' and ')||'true';
     if(this.updates){const assignments=Object.entries(this.updates).map(([k,v])=>{if(!/^[a-z_]+$/.test(k))throw Error('Invalid update');values.push(v);return `"${k}"=$${values.length}`;});query=`update "${this.table}" set ${assignments.join(',')} where ${where} returning *`;}
     else if(this.columns==='license_id,light_licenses(*)')query=`select a.license_id,to_jsonb(l) as light_licenses from light_activations a join light_licenses l on l.id=a.license_id where ${where}`;
-    else query=`select * from "${this.table}" where ${where} ${this.sort||''} ${this.count?'limit '+this.count:''}`;
+    else {
+      if(!/^(\*|[a-z_]+(,[a-z_]+)*)$/.test(this.columns||'*'))throw Error('Invalid selected columns');
+      query=`select ${this.columns||'*'} from "${this.table}" where ${where} ${this.sort||''} ${this.count!==undefined?'limit '+this.count:''}`;
+    }
     const rows=(await this.pg.query(query,values)).rows;if(this.required&&!rows.length)throw Error('Not found');return {data:this.one?rows[0]||null:rows,error:null};
   }catch(error){return {data:null,error};}}
 }
