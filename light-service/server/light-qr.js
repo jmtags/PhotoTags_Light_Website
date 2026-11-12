@@ -127,7 +127,7 @@ async function checkout(db, installationId, data, env, fetcher) {
   if (!/^pi_[A-Za-z0-9_]+$/.test(intent?.id || '')) throw new Error('light_payment_mismatch');
   session = {...session,payment_intent_id:intent.id}; validateIntent(intent,session);
   checked(await db.rpc('light_attach_qr_intent',{p_id:session.id,p_intent_id:intent.id}));
-  const method = await payments.provider('/payment_methods',{method:'POST',body:{data:{attributes:{type:'qrph',expiry_seconds:1800,billing:{email:session.customer_email}}}}},env,fetcher);
+  const method = await payments.provider('/payment_methods',{method:'POST',body:{data:{attributes:{type:'qrph',expiry_seconds:1800,billing:{name:data.billingName,email:session.customer_email}}}}},env,fetcher);
   if (!/^pm_[A-Za-z0-9_]+$/.test(method?.id || '')) throw new Error('light_qr_unavailable');
   const attached = await payments.provider(`/payment_intents/${intent.id}/attach`,{method:'POST',body:{data:{attributes:{payment_method:method.id,...(intent.attributes.client_key ? {client_key:intent.attributes.client_key} : {})}}}},env,fetcher);
   return view(await reconcile(db,session,env,fetcher,attached));

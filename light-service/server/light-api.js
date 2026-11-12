@@ -71,7 +71,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const probe=await db.from('light_payments').select('payment_intent_id,qr_image_url,qr_expires_at').limit(0);
         const keyPresent=!!(env.LIGHT_PAYMONGO_SECRET_KEY || env.PAYMONGO_SECRET_KEY);
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
-        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-4'} });
+        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-5'} });
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -110,6 +110,8 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         if (activated.status !== 'licensed') throw new Error(activated.status);
       }
       if (route === 'qr-checkout') {
+        if (typeof data.billingName !== 'string' || !data.billingName.trim() || data.billingName.length > 120 || /[\u0000-\u001f\u007f]/.test(data.billingName)) throw new Error('light_billing_name_required');
+        data.billingName=data.billingName.trim();
         if (!email(data.email) || data.acceptedAgreement !== true) throw new Error('light_email_and_agreement_required');
         return base.sendJson(response,200,{ok:true,...await qr.checkout(db,body.installationId,data,env,fetcher)});
       }

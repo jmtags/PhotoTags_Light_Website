@@ -56,6 +56,8 @@ async function main(){
    await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Agree & continue'}).click();
    await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeDisabled();
    await dialog.getByRole('radio').first().check();await dialog.getByLabel('Receipt email').fill('browser-fixture@example.test');
+   await expect(dialog.getByRole('button',{name:'Show payment QR'})).toBeDisabled();
+   await dialog.getByLabel('Payer name').fill('Browser Fixture Payer');
    await dialog.getByRole('button',{name:'Show payment QR'}).click();
    if(oldService){
      await expect(dialog.getByRole('status')).toContainText('latest Light service deployment');
@@ -72,6 +74,7 @@ async function main(){
    if(legacy){
      await expect(dialog.getByRole('button',{name:'Switch to in-app QR'})).toBeEnabled();
      await expect(dialog.getByRole('link',{name:'complete the earlier payment at PayMongo'})).toBeVisible();
+     await dialog.getByLabel('Payer name').fill('Browser Fixture Payer');
      await dialog.getByRole('button',{name:'Switch to in-app QR'}).click();
    }
    await expect(dialog.getByRole('img',{name:'QR Ph code for PhotoTags Light license payment'})).toBeVisible();
@@ -99,6 +102,7 @@ async function main(){
    expect(provider.intents.size+provider.checkouts.size).toBe(before);
    await dialog.getByRole('checkbox').check();await dialog.getByRole('button',{name:'Agree & continue'}).click();
    await expect(dialog.getByLabel('Receipt email')).toHaveValue('browser-fixture@example.test');
+   await dialog.getByLabel('Payer name').fill('Browser Fixture Payer');
    await dialog.getByRole('radio').first().check();await dialog.getByRole('button',{name:'Show payment QR'}).click();
    await expect(dialog.getByRole('img')).toBeVisible();
    expect(previous.attributes.status).toBe('cancelled');

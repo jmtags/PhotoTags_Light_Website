@@ -18,6 +18,8 @@ If the dialog shows an earlier hosted payment, enter the receipt email and selec
 
 Every dialog opening starts at Terms with consent unchecked, followed by plan selection. Receipt email can be restored from the installation-owned payment response. Before generating a fresh QR, the server checks and closes the previous unpaid attempt; paid purchases activate and processing payments remain protected. **Cancel & start over** also returns to Terms after confirmed cancellation. Payment confirmation continues automatically. This uses the existing Light schema and requires no extra migration or project.
 
+QR payment requires the payer name and receipt email. The Light service validates the name before reserving a payment and sends it as `billing.name` to PayMongo; it does not substitute a fabricated name. This fixes PayMongo `parameter_required` on `/payment_methods` for `billing.name`. Existing interrupted unpaid attempts are checked and cancelled before a fresh QR is generated. No schema or environment-variable change is required.
+
 ## Payment lifecycle and recovery
 
 - The receipt email, accepted agreement version, amount, currency, duration and installation allowance are snapshotted server-side. Payment Intent descriptions explicitly identify `PhotoTags Light license`, plan and reference. This affects new purchases; historical PayMongo transaction descriptions are unchanged.

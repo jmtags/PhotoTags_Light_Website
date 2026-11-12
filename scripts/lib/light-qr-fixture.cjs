@@ -19,6 +19,7 @@ module.exports = function fixture() {
       value = {id:`pi_fixture_${++sequence}_${crypto.randomUUID().replaceAll('-','')}`,attributes:{...input,status:'awaiting_payment_method',client_key:'fixture_client_key',payments:[]}};
       intents.set(value.id,value);
     } else if (path === '/v1/payment_methods') {
+      if (!input.billing?.name?.trim()) return {ok:false,status:400,json:async()=>({errors:[{code:'parameter_required',source:{pointer:'billing.name'}}]})};
       assert.equal(input.type,'qrph'); value = {id:'pm_fixture'};
     } else {
       const id = path.split('/')[3]; value = intents.get(id); assert.ok(value,`Unknown fixture intent ${id}`);

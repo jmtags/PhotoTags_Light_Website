@@ -26,7 +26,7 @@ function client(provider){
     const response={setHeader(){},end(raw){this.body=JSON.parse(raw);}};await handler(request,response);return {code:response.statusCode,...response.body};
   }};
 }
-const order={planId:'weekly',email:'fixture@example.test',acceptedAgreement:true};
+const order={billingName:'Fixture Payer',planId:'weekly',email:'fixture@example.test',acceptedAgreement:true};
 test('an earlier hosted attempt switches to in-app QR only after confirmed provider expiry',async()=>{
   const provider=fixture(),c=client(provider);
   const hosted=await c.call('checkout',order);assert.equal(hosted.ok,true,JSON.stringify(hosted));
@@ -172,4 +172,18 @@ test('unpaid attempts remain cancellable even if the provider QR image cannot be
   intent.attributes.next_action.code.image_url='invalid';
   assert.equal((await c.call('payment-status',{paymentId:first.paymentId})).status,'light_qr_unavailable');
   assert.equal((await c.call('cancel-payment',{paymentId:first.paymentId})).status,'cancelled');
+});
+
+
+test('QR requires a payer name before reservation and sends it to PayMongo billing',async()=>{
+  const provider=fixture(),c=client(provider);
+  for(const billingName of [undefined,'   ',42,'a'.repeat(121),'Bad\nName']){
+    const denied=await c.call('qr-checkout',{...order,billingName});
+    assert.equal(denied.status,'light_billing_name_required');
+  }
+  assert.equal(provider.calls.length,0);
+  assert.equal((await pg.query('select count(*)::int as n from light_payments where installation_id=$1',[c.id])).rows[0].n,0);
+  const result=await c.call('qr-checkout',{...order,billingName:'  Juan Dela Cruz  '});assert.ok(result.qrImageUrl);
+  const request=provider.calls.find(c=>new URL(c.url).pathname==='/v1/payment_methods');
+  assert.deepEqual(JSON.parse(request.options.body).data.attributes.billing,{name:'Juan Dela Cruz',email:order.email});
 });
