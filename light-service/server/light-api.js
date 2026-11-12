@@ -3,6 +3,7 @@ const base = require('./light-utils');
 const keys = require('./light-crypto');
 const payments = require('./light-payments');
 const qr = require('./light-qr');
+const photoDownloads = require('./light-photo-downloads');
 function checked(result) {
   if (result.error) throw new Error(/^light_[a-z_]+$/.test(result.error.message || '') ? result.error.message : 'light_database_unavailable');
   return result.data;
@@ -42,7 +43,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
     if (request.method === 'OPTIONS') { response.statusCode = 204; return response.end(); }
     const url = new URL(request.url || '/', 'https://light.local');
     const route = request.query?.route || url.searchParams.get('route');
-    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
+    if (!['plans','admin','challenge','register','check','activate','checkout','qr-checkout','payment-status','cancel-payment','photo-upload','webhook'].includes(route)) return base.sendJson(response, 404, { ok: false, status: 'light_route_not_found' });
     if (request.method !== (route === 'plans' || route === 'admin' && request.method === 'GET' ? 'GET' : 'POST')) return base.sendJson(response, 405, { ok: false, status: 'method_not_allowed' });
     if (!base.checkRateLimit(request, `light_${route}`, route === 'challenge' ? 60 : 120, 60000)) return base.sendJson(response, 429, { ok: false, status: 'rate_limited' });
     try {
@@ -71,7 +72,7 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         const probe=await db.from('light_payments').select('payment_intent_id,qr_image_url,qr_expires_at').limit(0);
         const keyPresent=!!(env.LIGHT_PAYMONGO_SECRET_KEY || env.PAYMONGO_SECRET_KEY);
         const setupStatus=probe.error ? ['PGRST204','42703'].includes(probe.error.code) ? 'light_inline_qr_not_configured' : 'light_database_unavailable' : keyPresent ? 'ready' : 'light_payments_not_configured';
-        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-7'} });
+        return base.sendJson(response, 200, { ok: true, product: keys.PRODUCT, plans, paymentSetup:{inlineQr:setupStatus==='ready',status:setupStatus,version:'light-qr-8'} });
       }
       if (route === 'admin') {
         if (!admin(request, env)) return base.sendJson(response, 401, { ok: false, status: 'unauthorized' });
@@ -104,6 +105,13 @@ function createLightHandler({ env = process.env, client = base.createClientFromE
         p_key_hash: proof.payload.keyHash, p_name: validText(data.name) ? data.name.trim() : 'My PhotoTags Light booth',
         p_platform: validText(data.platform) ? data.platform : 'Web', p_app_version: 'light-1' }));
       if (registration.status !== 'registered') throw new Error(registration.status);
+      if (route==='photo-upload') {
+        if(data.acceptedUpload!==true)throw new Error('light_photo_consent_required');
+        const license=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;
+        if(!license || license.status!=='active' || license.expires_at && Date.parse(license.expires_at)<=Date.now())throw new Error('light_license_required');
+        if(!base.checkRateLimit(request,'light_photo_'+body.installationId,10,60000))throw new Error('light_photo_rate_limited');
+        return base.sendJson(response,200,{ok:true,...await photoDownloads.reserve(body.installationId,fetcher)});
+      }
       if (['activate','checkout','qr-checkout'].includes(route)) {
         const current=checked(await db.from('light_activations').select('license_id,light_licenses(*)').eq('installation_id',body.installationId).maybeSingle())?.light_licenses;
         if (current?.status==='active' && (!current.expires_at || Date.parse(current.expires_at)>Date.now())) throw new Error('light_already_licensed');

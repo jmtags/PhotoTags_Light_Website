@@ -251,3 +251,31 @@ test('manual activation cannot race a pending payment or replace a concurrently 
   assert.ok(fs.readFileSync('supabase/one_time_supabase_setup.sql','utf8').replace(/\r\n/g,'\n').includes(sql.replace(/\r\n/g,'\n')));
   assert.equal((await pg.query("select has_function_privilege('anon','light_reserve_qr(uuid,text,text)','execute') as ok")).rows[0].ok,false);
 });
+
+
+test('online photo downloads require a licensed signed installation and explicit upload consent',async()=>{
+  const provider=fixture();let uploads=0;
+  provider.fetcher=async(url,options)=>{
+    assert.equal(url,'https://www.phototags.app/api/upload');assert.equal(options.method,'POST');
+    assert.deepEqual(JSON.parse(options.body),{contentType:'image/jpeg'});assert.match(options.headers['User-Agent'],/^PhotoTagsLight\/[a-f0-9]{24}$/);
+    uploads++;return {ok:true,json:async()=>({ok:true,code:'LIGHTPHOTO1',signedUploadUrl:'https://fixture.supabase.co/storage/v1/object/upload/sign/photobooth-downloads/captures/LIGHTPHOTO1.jpg?token=fixture',qrUrl:'https://unused-origin.test/download/LIGHTPHOTO1',expiresAt:new Date(Date.now()+1800000).toISOString()})};
+  };
+  const c=client(provider);
+  assert.equal((await c.call('photo-upload',{acceptedUpload:true})).status,'light_license_required');assert.equal(uploads,0);
+  const grant=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly'}})).data;
+  assert.equal((await c.call('activate',{licenseKey:grant.licenseKey})).status,'licensed');
+  assert.equal((await c.call('photo-upload',{acceptedUpload:false})).status,'light_photo_consent_required');assert.equal(uploads,0);
+  const shared=await c.call('photo-upload',{acceptedUpload:true});assert.equal(shared.ok,true);assert.equal(shared.qrUrl,'https://www.phototags.app/download/LIGHTPHOTO1');assert.equal(uploads,1);
+  await pg.query('update light_installations set blocked=true where id=$1',[c.id]);
+  assert.equal((await c.call('photo-upload',{acceptedUpload:true})).status,'installation_blocked');assert.equal(uploads,1);
+  assert.deepEqual((await pg.query('select * from licenses')).rows,[{id:'apk-untouched'}]);
+});
+
+test('photo upload bridge rejects upstream errors and unexpected storage destinations',async()=>{
+  const photos=require('../light-service/server/light-photo-downloads');
+  for(const status of [429,503])await assert.rejects(photos.reserve(crypto.randomUUID(),async()=>({ok:false,status})),status===429?/rate_limited/:/unavailable/);
+  const valid={ok:true,code:'LIGHTPHOTO1',signedUploadUrl:'https://fixture.supabase.co/storage/v1/object/upload/sign/photobooth-downloads/captures/a.jpg',expiresAt:new Date(Date.now()+1800000).toISOString()};
+  for(const patch of [{signedUploadUrl:'https://evil.test/upload'},{signedUploadUrl:'https://fixture.supabase.co/storage/v1/object/upload/sign/other-bucket/a.jpg'},{code:'../unsafe'},{expiresAt:'invalid'}]){
+    await assert.rejects(photos.reserve(crypto.randomUUID(),async()=>({ok:true,json:async()=>({...valid,...patch})})),/response_invalid/);
+  }
+});
