@@ -204,6 +204,27 @@ async function main(){
     return data;
   }
   const trialAirPrint=await airPrintSheet();
+  async function blePrintJob(){
+    await trialPage.goto('http://localhost:4185');
+    await trialPage.evaluate(()=>{
+      window.blePackets=[];const device=new EventTarget();device.name='Fixture BLE receipt printer';
+      device.gatt={connected:false,disconnect(){this.connected=false;device.dispatchEvent(new Event('gattserverdisconnected'));},async connect(){this.connected=true;return {async getPrimaryService(uuid){if(uuid!=='000018f0-0000-1000-8000-00805f9b34fb')throw Error('No service');return {async getCharacteristic(){return {properties:{write:true},async writeValueWithResponse(bytes){window.blePackets.push(...bytes);}};}};}};}};
+      Object.defineProperty(navigator,'bluetooth',{configurable:true,value:{async requestDevice(){return device;}}});
+      const delay=window.setTimeout;window.setTimeout=(fn,ms,...args)=>{if(ms===10){queueMicrotask(()=>fn(...args));return 0;}return delay(fn,ms,...args);};
+    });
+    await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();
+    await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('ble');
+    await trialPage.getByRole('button',{name:'Find Bluetooth printer',exact:true}).click();
+    await expect(trialPage.getByRole('status').filter({hasText:'Connected:'})).toContainText('Fixture BLE');
+    await trialPage.getByRole('button',{name:'Load printer test artwork',exact:true}).click();
+    await expect(trialPage.getByRole('button',{name:'Send one receipt',exact:true})).toBeEnabled();
+    await trialPage.getByRole('button',{name:'Send one receipt',exact:true}).click();
+    await expect(trialPage.getByRole('status').filter({hasText:'Check your last print'})).toContainText('Sent to the BLE printer',{timeout:20000});
+    const bytes=Buffer.from(await trialPage.evaluate(()=>window.blePackets));expect([...bytes.subarray(0,5)]).toEqual([27,64,27,97,1]);
+    await trialPage.getByRole('button',{name:'I checked the printer',exact:true}).click();
+    await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('qz');return bytes;
+  }
+  const trialBlePrint=await blePrintJob();
   async function photoBoothSheet(){
     await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();
     await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('airprint');
@@ -236,6 +257,8 @@ async function main(){
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
   expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
   const paidAirPrint=await airPrintSheet();expect(paidAirPrint.equals(trialAirPrint)).toBe(false);
+  const paidBlePrint=await blePrintJob();expect(paidBlePrint.length).toBe(trialBlePrint.length);expect(paidBlePrint.equals(trialBlePrint)).toBe(false);
+  console.log('PASS: signed trial/paid BLE printing preserves trial watermarks and unresolved-job review without QZ dispatch.');
   const paidPhotoBooth=await photoBoothSheet();expect(paidPhotoBooth.equals(trialPhotoBooth)).toBe(false);
   console.log('PASS: PhotoBooth launch license gate, trial/paid four-photo sessions, photo-sheet watermark difference and decorated-photo QR.');
   console.log('PASS: signed trial and paid AirPrint sheets, trial watermark difference, native print request once and unresolved-job review.');
