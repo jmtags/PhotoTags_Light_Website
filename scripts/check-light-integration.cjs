@@ -179,6 +179,24 @@ async function main(){
   await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();
   const trialJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const trialJob=fs.readFileSync(await (await trialJobEvent).path());
+  async function airPrintSheet(){
+    await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('airprint');
+    await trialPage.getByRole('button',{name:'Preview AirPrint sheet',exact:true}).click();
+    const sheet=trialPage.getByRole('dialog',{name:'Print your photo sheet'});
+    await expect(sheet.getByRole('button',{name:'Print / AirPrint',exact:true})).toBeEnabled();
+    const data=Buffer.from((await sheet.locator('.airprint-sheet').getAttribute('src')).split(',')[1],'base64');
+    const meta=await req('sharp')(data).metadata();expect([meta.width,meta.height]).toEqual([1200,1800]);
+    const target=trialPage.frames().find(f=>f.parentFrame());
+    await target.evaluate(()=>{window.fixtureAirPrintCalls=0;window.print=()=>window.fixtureAirPrintCalls++;});
+    await sheet.getByRole('button',{name:'Print / AirPrint',exact:true}).click();
+    expect(await target.evaluate(()=>window.fixtureAirPrintCalls)).toBe(1);
+    await sheet.getByRole('button',{name:'Close AirPrint preview'}).click();
+    await expect(trialPage.getByRole('status').filter({hasText:'Check your last print'})).toContainText('Printing or cancellation is unconfirmed');
+    await trialPage.getByRole('button',{name:'I checked the printer',exact:true}).click();
+    await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('qz');
+    return data;
+  }
+  const trialAirPrint=await airPrintSheet();
   await trialPage.goto('http://localhost:4185/__light-photo-test');
   await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toHaveCount(0);expect(trialUploads).toBe(1);
   await trialPage.screenshot({path:path.join(booth,'artifacts/light-trial-qr-phone.png'),fullPage:true});
@@ -189,6 +207,8 @@ async function main(){
   await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('button',{name:'Load printer test artwork'}).click();
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
   expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
+  const paidAirPrint=await airPrintSheet();expect(paidAirPrint.equals(trialAirPrint)).toBe(false);
+  console.log('PASS: signed trial and paid AirPrint sheets, trial watermark difference, native print request once and unresolved-job review.');
   await trialPage.getByRole('button',{name:'Connect & find printer queues'}).click();await trialPage.getByLabel('Raw printer queue').selectOption('Fixture thermal queue');
   await trialPage.evaluate(()=>Object.defineProperty(navigator.mediaDevices,'getUserMedia',{configurable:true,value:async()=>{const c=document.createElement('canvas');c.width=1280;c.height=720;c.getContext('2d').fillRect(0,0,1280,720);const stream=c.captureStream(10);Object.defineProperty(stream.getVideoTracks()[0],'label',{value:'Fixture USB Camera'});return stream;}}));
   await trialPage.getByRole('button',{name:'Launch kiosk',exact:true}).click();const trackedKiosk=trialPage.getByRole('dialog',{name:'PhotoTags LRB guest kiosk'});
