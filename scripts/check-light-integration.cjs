@@ -51,6 +51,10 @@ async function main(){
     uploaded++;await route.fulfill({status:200,json:{ok:true}});
   });
   const page=await context.newPage();page.on('pageerror',e=>console.error('Browser error:',e.message));await page.clock.install();await page.goto('http://localhost:4185',{waitUntil:'domcontentloaded'});
+  await page.getByRole('button',{name:'Launch PhotoBooth',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Activate to launch your booth',exact:true})).toBeVisible();
+  await expect(page.getByRole('dialog',{name:'PhotoTags LRB PhotoBooth kiosk',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Close license wall',exact:true}).click();
   await page.getByRole('button',{name:'Launch kiosk',exact:true}).click();
   await expect(page.getByRole('heading',{name:'PhotoTags LRB license',exact:true})).toBeVisible();
   await expect(page.locator('.light-license-settings [role=status]')).toContainText('Activate a PhotoTags LRB license');
@@ -200,8 +204,29 @@ async function main(){
     return data;
   }
   const trialAirPrint=await airPrintSheet();
+  async function photoBoothSheet(){
+    await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();
+    await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('airprint');
+    await trialPage.evaluate(()=>{
+      Object.defineProperty(navigator.mediaDevices,'getUserMedia',{configurable:true,value:async()=>{const c=document.createElement('canvas');c.width=1280;c.height=960;const x=c.getContext('2d');x.fillStyle='#2255ee';x.fillRect(0,0,1280,960);return c.captureStream(10);}});
+      const delay=window.setTimeout;window.setTimeout=(fn,ms,...args)=>delay(fn,ms===1000?30:ms,...args);
+    });
+    await trialPage.getByRole('button',{name:'Launch PhotoBooth',exact:true}).click();
+    const kiosk=trialPage.getByRole('dialog',{name:'PhotoTags LRB PhotoBooth kiosk',exact:true});
+    await kiosk.getByRole('button',{name:'Start',exact:true}).click();
+    await expect(kiosk.getByRole('heading',{name:'Make it yours.',exact:true})).toBeVisible({timeout:20000});await expect(kiosk.locator('.photo-drag-handle')).toHaveCount(8);
+    await kiosk.getByRole('button',{name:'Review photo',exact:true}).click();await kiosk.getByRole('button',{name:'Print my photo',exact:true}).click();
+    const sheet=trialPage.getByRole('dialog',{name:'Print your photo sheet'});await expect(sheet.getByRole('button',{name:'Print / AirPrint',exact:true})).toBeEnabled();
+    const png=Buffer.from((await sheet.locator('.airprint-sheet').getAttribute('src')).split(',')[1],'base64');
+    await sheet.getByRole('button',{name:'Close AirPrint preview',exact:true}).click();
+    await kiosk.getByRole('button',{name:'Continue to download',exact:true}).click();await expect(kiosk.getByAltText('Scan to download decorated photo')).toBeVisible();
+    const meta=await req('sharp')(png).metadata();expect([meta.width,meta.height]).toEqual([1200,1800]);
+    await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Printer connection',exact:true}).click();await trialPage.getByRole('combobox',{name:'Print method',exact:true}).selectOption('qz');
+    return png;
+  }
+  const trialPhotoBooth=await photoBoothSheet();
   await trialPage.goto('http://localhost:4185/__light-photo-test');
-  await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toHaveCount(0);expect(trialUploads).toBe(1);
+  await expect(trialPage.getByAltText('Scan to download decorated receipt')).toBeVisible();await expect(trialPage.getByAltText('Scan to download raw photo')).toHaveCount(0);expect(trialUploads).toBe(2);
   await trialPage.screenshot({path:path.join(booth,'artifacts/light-trial-qr-phone.png'),fullPage:true});
   const upgrade=(await db.rpc('light_admin_action',{p_action:'create_license',p_id:'',p_values:{planId:'monthly',email:'trial-upgrade@example.test'}})).data;
   await trialPage.goto('http://localhost:4185');await trialPage.getByRole('button',{name:'Light license',exact:true}).click();
@@ -211,6 +236,8 @@ async function main(){
   await expect(trialPage.getByRole('button',{name:'Export ESC/POS job'})).toBeEnabled();const paidJobEvent=trialPage.waitForEvent('download');await trialPage.getByRole('button',{name:'Export ESC/POS job'}).click();const paidJob=fs.readFileSync(await (await paidJobEvent).path());
   expect(paidJob.length).toBe(trialJob.length);expect(paidJob.equals(trialJob)).toBe(false);
   const paidAirPrint=await airPrintSheet();expect(paidAirPrint.equals(trialAirPrint)).toBe(false);
+  const paidPhotoBooth=await photoBoothSheet();expect(paidPhotoBooth.equals(trialPhotoBooth)).toBe(false);
+  console.log('PASS: PhotoBooth launch license gate, trial/paid four-photo sessions, photo-sheet watermark difference and decorated-photo QR.');
   console.log('PASS: signed trial and paid AirPrint sheets, trial watermark difference, native print request once and unresolved-job review.');
   await trialPage.getByRole('button',{name:'Connect & find printer queues'}).click();await trialPage.getByLabel('Raw printer queue').selectOption('Fixture thermal queue');
   await trialPage.evaluate(()=>Object.defineProperty(navigator.mediaDevices,'getUserMedia',{configurable:true,value:async()=>{const c=document.createElement('canvas');c.width=1280;c.height=720;c.getContext('2d').fillRect(0,0,1280,720);const stream=c.captureStream(10);Object.defineProperty(stream.getVideoTracks()[0],'label',{value:'Fixture USB Camera'});return stream;}}));
