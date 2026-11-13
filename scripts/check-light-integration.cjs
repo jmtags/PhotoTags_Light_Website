@@ -186,10 +186,13 @@ async function main(){
     await expect(sheet.getByRole('button',{name:'Print / AirPrint',exact:true})).toBeEnabled();
     const data=Buffer.from((await sheet.locator('.airprint-sheet').getAttribute('src')).split(',')[1],'base64');
     const meta=await req('sharp')(data).metadata();expect([meta.width,meta.height]).toEqual([1200,1800]);
-    const target=trialPage.frames().find(f=>f.parentFrame());
-    await target.evaluate(()=>{window.fixtureAirPrintCalls=0;window.print=()=>window.fixtureAirPrintCalls++;});
+    const opening=trialPage.waitForEvent('popup');
     await sheet.getByRole('button',{name:'Print / AirPrint',exact:true}).click();
+    const target=await opening;await expect(target.getByRole('button',{name:'Print / AirPrint',exact:true})).toBeEnabled();
+    await target.evaluate(()=>{window.fixtureAirPrintCalls=0;window.print=()=>window.fixtureAirPrintCalls++;});
+    await target.getByRole('button',{name:'Print / AirPrint',exact:true}).click();
     expect(await target.evaluate(()=>window.fixtureAirPrintCalls)).toBe(1);
+    await expect(target.getByRole('button',{name:'Print / AirPrint',exact:true})).toBeDisabled();await target.close();
     await sheet.getByRole('button',{name:'Close AirPrint preview'}).click();
     await expect(trialPage.getByRole('status').filter({hasText:'Check your last print'})).toContainText('Printing or cancellation is unconfirmed');
     await trialPage.getByRole('button',{name:'I checked the printer',exact:true}).click();
